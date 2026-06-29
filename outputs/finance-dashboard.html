@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>財經即時儀表板</title>
+    <link rel="stylesheet" href="./finance-dashboard.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Market Watch</p>
+          <h1>財經即時儀表板</h1>
+        </div>
+        <section class="status-panel" aria-label="更新狀態">
+          <div>
+            <span class="label">更新頻率</span>
+            <strong>行情 1 分鐘</strong>
+          </div>
+          <div>
+            <span class="label">下次更新</span>
+            <strong id="countdown">--:--</strong>
+          </div>
+          <button id="refreshButton" type="button" title="立即更新" aria-label="立即更新">
+            <span aria-hidden="true">↻</span>
+          </button>
+        </section>
+      </header>
+
+      <section class="summary-strip" aria-label="市場總覽">
+        <article>
+          <span>風險溫度</span>
+          <strong id="riskTone">讀取中</strong>
+        </article>
+        <article>
+          <span>最後更新</span>
+          <strong id="lastUpdated">--</strong>
+        </article>
+        <article>
+          <span>資料狀態</span>
+          <strong id="dataStatus">初始化</strong>
+        </article>
+      </section>
+
+      <section class="dashboard-grid">
+        <section class="market-section">
+          <div class="section-heading">
+            <h2>台股指數</h2>
+            <span>現貨與期貨</span>
+          </div>
+          <div class="card-grid" id="taiwanIndexGrid"></div>
+        </section>
+
+        <section class="market-section">
+          <div class="section-heading">
+            <h2>台股籌碼</h2>
+            <span>法人、期貨、融資</span>
+          </div>
+          <div class="card-grid" id="taiwanFlowGrid"></div>
+        </section>
+
+        <section class="market-section wide">
+          <div class="section-heading">
+            <h2>國際指數</h2>
+            <span>亞股與美股</span>
+          </div>
+          <div class="card-grid large" id="globalIndexGrid"></div>
+        </section>
+
+        <section class="market-section wide">
+          <div class="section-heading">
+            <h2>國際避險商品</h2>
+            <span>美元、利率、商品、波動率</span>
+          </div>
+          <div class="card-grid large" id="safeHavenGrid"></div>
+        </section>
+      </section>
+    </main>
+
+    <template id="metricCardTemplate">
+      <article class="metric-card">
+        <div class="metric-head">
+          <div>
+            <h3></h3>
+            <p></p>
+          </div>
+          <span class="market-state"></span>
+        </div>
+        <div class="metric-value">--</div>
+        <div class="metric-foot">
+          <span class="change">--</span>
+          <span class="source">--</span>
+        </div>
+      </article>
+    </template>
+
+    <script>
+      const REFRESH_MS = 5 * 60 * 1000;
+      const DEFAULT_REFRESH_MS = 60 * 1000;
+      const API_URL = "/api/market";
+      let refreshMs = DEFAULT_REFRESH_MS;
+      let nextRefreshAt = Date.now() + refreshMs;
+
+      const sections = {
+        taiwanIndex: document.querySelector("#taiwanIndexGrid"),
+        taiwanFlow: document.querySelector("#taiwanFlowGrid"),
+        globalIndex: document.querySelector("#globalIndexGrid"),
+        safeHaven: document.querySelector("#safeHavenGrid"),
+      };
+
+      const fallbackData = {
+        generatedAt: new Date().toISOString(),
+        mode: "demo",
+        groups: {
+          taiwanIndex: [
+            { name: "加權指數", ticker: "^TWII", value: "待連線", changePct: null, state: "資料源" },
+            { name: "櫃買指數", ticker: "^TWOII", value: "待連線", changePct: null, state: "資料源" },
+            { name: "台指期夜盤", ticker: "TXF 夜盤", value: "待接期交所", changePct: null, state: "需設定" },
+            { name: "富台指", ticker: "FTSE Taiwan", value: "待接資料源", changePct: null, state: "需設定" },
+          ],
+          taiwanFlow: [
+            { name: "外資買賣超", ticker: "上市櫃", value: "待接 TWSE/TPEx", changePct: null, state: "盤後" },
+            { name: "投信買賣超", ticker: "上市櫃", value: "待接 TWSE/TPEx", changePct: null, state: "盤後" },
+            { name: "自營商買賣超", ticker: "上市櫃", value: "待接 TWSE/TPEx", changePct: null, state: "盤後" },
+            { name: "外資期貨淨空單", ticker: "TAIFEX", value: "待接 WantGoo", changePct: null, state: "15:15 日更" },
+            { name: "上市融資餘額", ticker: "TWSE", value: "待接 WantGoo", changePct: null, state: "21:15 日更" },
+          ],
+          globalIndex: [
+            { name: "日經 225", ticker: "^N225", value: "待連線", changePct: null, state: "資料源" },
+            { name: "KOSPI", ticker: "^KS11", value: "待連線", changePct: null, state: "資料源" },
+            { name: "S&P 500", ticker: "^GSPC", value: "待連線", changePct: null, state: "資料源" },
+            { name: "Nasdaq", ticker: "^IXIC", value: "待連線", changePct: null, state: "資料源" },
+            { name: "Dow Jones", ticker: "^DJI", value: "待連線", changePct: null, state: "資料源" },
+            { name: "費城半導體", ticker: "^SOX", value: "待連線", changePct: null, state: "資料源" },
+          ],
+          safeHaven: [
+            { name: "美元指數", ticker: "DX-Y.NYB", value: "待連線", changePct: null, state: "資料源" },
+            { name: "美國 10Y 殖利率", ticker: "^TNX", value: "待連線", changePct: null, state: "資料源" },
+            { name: "黃金", ticker: "GC=F", value: "待連線", changePct: null, state: "資料源" },
+            { name: "布蘭特原油", ticker: "BZ=F", value: "待連線", changePct: null, state: "資料源" },
+            { name: "VIX", ticker: "^VIX", value: "待連線", changePct: null, state: "資料源" },
+          ],
+        },
+      };
+
+      function formatNumber(value, unit = "") {
+        if (value === null || value === undefined || value === "") return "--";
+        if (typeof value === "string") return value;
+        return `${Intl.NumberFormat("zh-TW", { maximumFractionDigits: 2 }).format(value)}${unit}`;
+      }
+
+      function formatChange(item) {
+        if (item.changeText) return item.changeText;
+        const changePct = item.changePct;
+        if (changePct === null || changePct === undefined) return "等待資料";
+        const sign = changePct > 0 ? "+" : "";
+        return `${sign}${changePct.toFixed(2)}%`;
+      }
+
+      function renderCard(item) {
+        const node = document.querySelector("#metricCardTemplate").content.firstElementChild.cloneNode(true);
+        const changeClass = item.tone || (item.changePct > 0 ? "up" : item.changePct < 0 ? "down" : "flat");
+        node.querySelector("h3").textContent = item.name;
+        node.querySelector("p").textContent = item.ticker || "";
+        node.querySelector(".market-state").textContent = item.state || "更新";
+        node.querySelector(".metric-value").textContent = formatNumber(item.value, item.unit || "");
+        node.querySelector(".change").textContent = formatChange(item);
+        node.querySelector(".change").classList.add(changeClass);
+        node.querySelector(".source").textContent = item.refreshRule ? `${item.source || "待設定"} · ${item.refreshRule}` : item.source || "待設定";
+        return node;
+      }
+
+      function render(data) {
+        Object.entries(sections).forEach(([key, element]) => {
+          element.replaceChildren(...(data.groups[key] || []).map(renderCard));
+        });
+
+        const updated = new Date(data.generatedAt);
+        document.querySelector("#lastUpdated").textContent = updated.toLocaleString("zh-TW", {
+          hour12: false,
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+        document.querySelector("#dataStatus").textContent = data.mode === "live" ? "即時資料" : "示範 / 待接資料源";
+        document.querySelector("#riskTone").textContent = computeRiskTone(data);
+        refreshMs = data.refresh?.marketMs || DEFAULT_REFRESH_MS;
+      }
+
+      function computeRiskTone(data) {
+        const vix = data.groups.safeHaven?.find((item) => item.ticker === "^VIX");
+        const dollar = data.groups.safeHaven?.find((item) => item.ticker === "DX-Y.NYB");
+        if (!vix?.value || typeof vix.value !== "number") return "等待 VIX";
+        if (vix.value >= 25) return "偏防禦";
+        if (vix.value < 15 && dollar?.changePct <= 0.3) return "風險偏好";
+        return "中性觀望";
+      }
+
+      async function refresh() {
+        document.querySelector("#dataStatus").textContent = "更新中";
+        try {
+          const response = await fetch(API_URL, { cache: "no-store" });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          render(await response.json());
+        } catch (error) {
+          render(fallbackData);
+          document.querySelector("#dataStatus").textContent = "本機示範資料";
+        } finally {
+          nextRefreshAt = Date.now() + refreshMs;
+        }
+      }
+
+      function tickCountdown() {
+        const remaining = Math.max(0, nextRefreshAt - Date.now());
+        const minutes = Math.floor(remaining / 60000);
+        const seconds = Math.floor((remaining % 60000) / 1000);
+        document.querySelector("#countdown").textContent = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+      }
+
+      document.querySelector("#refreshButton").addEventListener("click", refresh);
+      refresh();
+      tickCountdown();
+      setInterval(tickCountdown, 1000);
+      setInterval(() => {
+        if (Date.now() >= nextRefreshAt) refresh();
+      }, 1000);
+    </script>
+  </body>
+</html>
