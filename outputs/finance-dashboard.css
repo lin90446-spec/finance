@@ -118,7 +118,7 @@ h1 {
 
 .summary-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -170,6 +170,13 @@ h1 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.metric-pair {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .metric-card {
   display: flex;
   min-height: 148px;
@@ -178,6 +185,10 @@ h1 {
   border-radius: 8px;
   padding: 15px;
   box-shadow: none;
+}
+
+.metric-card.full-row {
+  grid-column: 1 / -1;
 }
 
 .metric-head,
@@ -247,6 +258,10 @@ h1 {
     grid-column: auto;
     grid-template-columns: 1fr;
   }
+
+  .metric-pair {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 680px) {
@@ -259,6 +274,33 @@ h1 {
   .summary-strip,
   .card-grid {
     grid-template-columns: 1fr;
+  }
+
+  .metric-pair {
+    gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric-pair .metric-card {
+    min-height: 136px;
+    padding: 12px;
+  }
+
+  .metric-pair .metric-head,
+  .metric-pair .metric-foot {
+    gap: 6px;
+  }
+
+  .metric-pair .metric-head h3 {
+    font-size: 0.86rem;
+  }
+
+  .metric-pair .metric-value {
+    font-size: 1.18rem;
+  }
+
+  .metric-pair .source {
+    font-size: 0.68rem;
   }
 
   .status-panel {

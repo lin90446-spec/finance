@@ -11,20 +11,20 @@ let marketCache = null;
 let flowCache = null;
 
 const yahooGroups = {
-  taiwanIndex: [
-    ["^TWII", "加權指數"],
-  ],
+  taiwanIndex: [],
   globalIndex: [
     ["^N225", "日經 225"],
     ["^KS11", "KOSPI"],
-    ["^GSPC", "S&P 500"],
-    ["^IXIC", "Nasdaq"],
-    ["^DJI", "Dow Jones"],
+    ["^GSPC", "S&P 500", "", "sp500"],
+    ["ES=F", "S&P 500 期貨", "", "sp500"],
+    ["^IXIC", "Nasdaq", "", "nasdaq"],
+    ["NQ=F", "Nasdaq 100 期貨", "", "nasdaq"],
+    ["^DJI", "Dow Jones", "", "dow"],
+    ["YM=F", "道瓊期貨", "", "dow"],
     ["^SOX", "費城半導體"],
   ],
   safeHaven: [
     ["DX-Y.NYB", "美元指數"],
-    ["^TNX", "美國 10Y 殖利率", "%"],
     ["GC=F", "黃金"],
     ["BZ=F", "布蘭特原油"],
     ["^VIX", "VIX"],
@@ -33,6 +33,7 @@ const yahooGroups = {
 
 const configuredPlaceholders = {
   taiwanIndex: [
+    { name: "加權指數", ticker: "TAIEX", value: null, changePct: null, state: "讀取失敗", source: "HiStock 台股大盤" },
     { name: "櫃買指數", ticker: "TWOI", value: null, changePct: null, state: "讀取失敗", source: "HiStock 櫃檯指數" },
     { name: "台指期夜盤", ticker: "TXF1", value: null, changePct: null, state: "讀取失敗", source: "CMoney" },
     { name: "富台指", ticker: "TWN", value: null, changePct: null, state: "讀取失敗", source: "HiStock 富台期" },
@@ -53,7 +54,7 @@ function mime(filePath) {
   return "text/html; charset=utf-8";
 }
 
-async function fetchYahooQuote(symbol, name, unit = "") {
+async function fetchYahooQuote(symbol, name, unit = "", pairKey = "") {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1m`;
   const response = await fetch(url, {
     headers: { "user-agent": "Mozilla/5.0 market-dashboard" },
@@ -74,6 +75,7 @@ async function fetchYahooQuote(symbol, name, unit = "") {
     changePct,
     state: meta.marketState || "更新",
     source: "Yahoo Finance",
+    pairKey,
   };
 }
 
@@ -108,9 +110,19 @@ function contractText(value) {
   return "多空平衡";
 }
 
+function contractCompareText(current, previous) {
+  const diff = current - previous;
+  const sign = diff > 0 ? "+" : "";
+  return `較前日 ${sign}${diff.toLocaleString("zh-TW")} 口`;
+}
+
 function quoteText(change, changePct) {
   const sign = change > 0 ? "+" : "";
   return `${sign}${change.toFixed(2)} / ${sign}${changePct.toFixed(2)}%`;
+}
+
+function signedText(value, unit = "") {
+  return `${value > 0 ? "+" : ""}${value.toLocaleString("zh-TW", { maximumFractionDigits: 2 })}${unit}`;
 }
 
 function htmlToLines(html) {
@@ -173,6 +185,7 @@ async function fetchTwseInstitutionalFlows() {
       state: date,
       source: "TWSE BFI82U",
       refreshRule: "15:15 日更",
+      pairKey: "flow-institutional",
     },
     {
       name: "投信買賣超",
@@ -185,6 +198,7 @@ async function fetchTwseInstitutionalFlows() {
       state: date,
       source: "TWSE BFI82U",
       refreshRule: "15:15 日更",
+      pairKey: "flow-institutional",
     },
     {
       name: "自營商買賣超",
@@ -197,6 +211,7 @@ async function fetchTwseInstitutionalFlows() {
       state: date,
       source: "TWSE BFI82U",
       refreshRule: "15:15 日更",
+      pairKey: "flow-dealer-public",
     },
   ];
 }
@@ -264,6 +279,34 @@ async function fetchHistockQuote({ code, name, sourceName }) {
   };
 }
 
+async function fetchHistockTaiex() {
+  const response = await fetch("https://histock.tw/%E5%8F%B0%E8%82%A1%E5%A4%A7%E7%9B%A4", {
+    headers: { "user-agent": "Mozilla/5.0 market-dashboard" },
+  });
+  if (!response.ok) throw new Error(`HiStock TAIEX ${response.status}`);
+  const lines = htmlToLines(await response.text());
+  const marketIndex = lines.findIndex((line, index) => line === "台股大盤" && lines[index + 1] === "加權指數");
+  const changeIndex = lines.indexOf("漲跌", marketIndex);
+  const changePctIndex = lines.indexOf("漲幅", marketIndex);
+  const timeLine = lines.find((line) => line.startsWith("本地時間:"));
+  const value = Number(String(lines[marketIndex + 4]).replace(/,/g, ""));
+  const change = parseSignedNumber(lines[changeIndex + 1]);
+  const changePct = parseSignedNumber(lines[changePctIndex + 1]);
+  if (!Number.isFinite(value) || change === null || changePct === null) {
+    throw new Error("HiStock TAIEX quote missing");
+  }
+  return {
+    name: "加權指數",
+    ticker: "TAIEX",
+    value,
+    changePct,
+    changeText: quoteText(change, changePct),
+    tone: change > 0 ? "up" : change < 0 ? "down" : "flat",
+    state: timeLine ? timeLine.replace("本地時間:", "") : "更新",
+    source: "HiStock 台股大盤",
+  };
+}
+
 async function fetchTwseMarginBalance() {
   const url = "https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?response=json";
   const response = await fetch(url, {
@@ -290,22 +333,146 @@ async function fetchTwseMarginBalance() {
     value: valueYi,
     unit: " 億",
     changePct: null,
-    changeText: `今日-前日 ${changeYi >= 0 ? "+" : ""}${changeYi.toFixed(2)} 億`,
+    changeText: `${changeYi >= 0 ? "+" : ""}${changeYi.toFixed(2)} 億`,
     tone: flowTone(changeYi),
     state: parseDateState(payload.date),
     source: "TWSE MI_MARGN 今日餘額",
     refreshRule: "21:15 日更",
+    pairKey: "flow-futures-margin",
   };
 }
 
-async function fetchTaifexForeignOpenInterest() {
-  const today = new Date().toLocaleDateString("zh-TW", {
-    timeZone: "Asia/Taipei",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).replace(/\//g, "%2F");
-  const body = `queryType=1&goDay=&doQuery=1&dateaddcnt=&queryDate=${today}&commodityId=TXF`;
+async function fetchTwseMarketTurnover() {
+  const url = "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=MS";
+  const response = await fetch(url, {
+    headers: {
+      accept: "application/json",
+      "user-agent": "Mozilla/5.0 market-dashboard",
+    },
+  });
+  if (!response.ok) throw new Error(`TWSE MI_INDEX ${response.status}`);
+  const payload = await response.json();
+  const table = payload.tables?.find((item) => item.title?.includes("大盤統計資訊"));
+  const row = table?.data?.find((item) => item[0] === "證券合計(1+6+14+15)");
+  if (!/^ok$/i.test(payload.stat) && payload.stat !== "OK") throw new Error(`TWSE MI_INDEX ${payload.stat || "invalid"}`);
+  if (!row) throw new Error("TWSE turnover missing");
+  const amountYi = toYi(parseAmount(row[1]));
+  return {
+    name: "上市成交量",
+    ticker: "TWSE",
+    value: amountYi,
+    unit: " 億",
+    changePct: null,
+    changeText: "成交金額",
+    tone: "flat",
+    state: parseDateState(payload.date),
+    source: "TWSE MI_INDEX 證券合計",
+    refreshRule: "15:15 日更",
+    fullRow: true,
+  };
+}
+
+function taipeiStartOfDayTimestamp(offsetDays = 0) {
+  const taipeiNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+  taipeiNow.setDate(taipeiNow.getDate() + offsetDays);
+  taipeiNow.setHours(0, 0, 0, 0);
+  return taipeiNow.getTime();
+}
+
+async function fetchWantgooJson(pathname, referer = "https://www.wantgoo.com/futures/retail-indicator/wtm&") {
+  const response = await fetch(`https://www.wantgoo.com${pathname}`, {
+    headers: {
+      authority: "www.wantgoo.com",
+      accept: "application/json, text/javascript, */*; q=0.01",
+      "accept-language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+      "cache-control": "no-cache",
+      pragma: "no-cache",
+      referer,
+      "sec-ch-ua": "\"Google Chrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": "\"macOS\"",
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "x-requested-with": "XMLHttpRequest",
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    },
+  });
+  if (!response.ok) throw new Error(`WantGoo ${pathname} ${response.status}`);
+  return response.json();
+}
+
+async function fetchMacromicroRetailRatio() {
+  const response = await fetch("https://www.macromicro.me/charts/110457/tw-tmf-long-to-short-ratio-of-individual-player", {
+    headers: {
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "accept-language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    },
+  });
+  if (!response.ok) throw new Error(`MacroMicro retail ratio ${response.status}`);
+  const text = htmlToLines(await response.text()).join("");
+  const match = text.match(/最新數據微台指散戶多空比\(L\)(\d{4}-\d{2}-\d{2})([-+\d.]+)%([-+\d.]+)%/);
+  if (!match) throw new Error("MacroMicro retail ratio missing");
+  const currentValue = Number(match[2]);
+  const previousValue = Number(match[3]);
+  const diff = currentValue - previousValue;
+  return {
+    name: "散戶多空比",
+    ticker: "微台指",
+    value: currentValue,
+    unit: "%",
+    changePct: null,
+    changeText: `${diff > 0 ? "+" : ""}${diff.toFixed(2)} 個百分點`,
+    tone: diff > 0 ? "up" : diff < 0 ? "down" : "flat",
+    state: match[1].slice(5).replace("-", "/"),
+    source: "MacroMicro",
+    refreshRule: "15:15 日更",
+    fullRow: true,
+  };
+}
+
+async function fetchWantgooPublicBankNetBuy() {
+  const data = await fetchWantgooJson(
+    "/stock/public-bank/trend-data?market=0",
+    "https://www.wantgoo.com/stock/public-bank/trend?market=0&typeShow=amount"
+  );
+  const fields = ["bot", "land", "tcb", "hncb", "mega", "tbb", "chb", "first"];
+  const rows = data.map((item) => {
+    const total = fields.reduce((sum, field) => sum + Number(item[field]?.amount || 0), 0);
+    return { date: item.date, total };
+  }).sort((a, b) => b.date - a.date);
+  const current = rows[0];
+  if (!current) throw new Error("WantGoo public bank missing");
+  const totalWan = current.total;
+  const totalYi = totalWan / 10000;
+  return {
+    name: "八大官股買賣超",
+    ticker: "上市",
+    value: Math.round(totalYi * 100) / 100,
+    unit: " 億",
+    changePct: null,
+    changeText: flowText(Math.round(totalYi * 100) / 100),
+    tone: flowTone(totalYi),
+    state: new Date(current.date).toLocaleDateString("zh-TW", { timeZone: "Asia/Taipei", month: "2-digit", day: "2-digit" }),
+    source: "WantGoo 合計(萬)",
+    refreshRule: "15:15 日更",
+    pairKey: "flow-dealer-public",
+  };
+}
+
+function taipeiDate(offsetDays = 0) {
+  const date = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+  date.setDate(date.getDate() + offsetDays);
+  return {
+    display: `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`,
+    form: `${date.getFullYear()}%2F${String(date.getMonth() + 1).padStart(2, "0")}%2F${String(date.getDate()).padStart(2, "0")}`,
+  };
+}
+
+async function fetchTaifexForeignOpenInterestByOffset(offsetDays) {
+  const queryDate = taipeiDate(offsetDays);
+  const body = `queryType=1&goDay=&doQuery=1&dateaddcnt=&queryDate=${queryDate.form}&commodityId=TXF`;
   const response = await fetch("https://www.taifex.com.tw/cht/3/futContractsDate", {
     method: "POST",
     headers: {
@@ -325,17 +492,105 @@ async function fetchTaifexForeignOpenInterest() {
   const netOpenInterest = values[5];
   if (!Number.isFinite(netOpenInterest)) throw new Error("TAIFEX net OI missing");
   return {
+    date: dateMatch ? `${dateMatch[1]}/${dateMatch[2]}/${dateMatch[3]}` : queryDate.display,
+    state: dateMatch ? `${dateMatch[2]}/${dateMatch[3]}` : queryDate.display.slice(5),
+    value: netOpenInterest,
+  };
+}
+
+async function fetchRecentTaifexForeignOpenInterest(startOffset = 0) {
+  for (let offset = startOffset; offset >= startOffset - 10; offset -= 1) {
+    try {
+      return await fetchTaifexForeignOpenInterestByOffset(offset);
+    } catch {
+      // Keep walking backward across weekends and holidays.
+    }
+  }
+  throw new Error("TAIFEX recent net OI missing");
+}
+
+async function fetchTaifexForeignOpenInterest() {
+  const current = await fetchRecentTaifexForeignOpenInterest(0);
+  let previous = null;
+  for (let offset = -1; offset >= -10; offset -= 1) {
+    try {
+      const candidate = await fetchTaifexForeignOpenInterestByOffset(offset);
+      if (candidate.date !== current.date) {
+        previous = candidate;
+        break;
+      }
+    } catch {
+      // Keep walking backward across weekends and holidays.
+    }
+  }
+  if (!previous) throw new Error("TAIFEX previous net OI missing");
+
+  return {
     name: "外資期貨淨空單",
     ticker: "TXF",
-    value: netOpenInterest,
+    value: current.value,
     unit: " 口",
     changePct: null,
-    changeText: contractText(netOpenInterest),
-    tone: netOpenInterest < 0 ? "down" : netOpenInterest > 0 ? "up" : "flat",
-    state: dateMatch ? `${dateMatch[2]}/${dateMatch[3]}` : "盤後",
+    changeText: contractCompareText(current.value, previous.value),
+    tone: current.value < 0 ? "down" : current.value > 0 ? "up" : "flat",
+    state: current.state,
     source: "TAIFEX",
     refreshRule: "15:15 日更",
+    pairKey: "flow-futures-margin",
   };
+}
+
+async function fetchTradingViewYield(symbol, name) {
+  const response = await fetch(`https://tw.tradingview.com/symbols/TVC-${symbol}/`, {
+    headers: { "user-agent": "Mozilla/5.0 market-dashboard" },
+  });
+  if (!response.ok) throw new Error(`TradingView ${symbol} ${response.status}`);
+  const html = await response.text();
+  const match = html.match(/當期殖利率為\s*([\d.]+)%/);
+  if (!match) throw new Error(`TradingView ${symbol} yield missing`);
+  const changeMatch = html.match(/過去一週(上漲|下降)了\s*([−+\-\d.]+)%/);
+  let weeklyChangePct = null;
+  if (changeMatch) {
+    weeklyChangePct = Number(changeMatch[2].replace("−", "-"));
+    if (changeMatch[1] === "下降" && weeklyChangePct > 0) {
+      weeklyChangePct *= -1;
+    }
+  }
+  return {
+    name,
+    ticker: symbol,
+    value: Number(match[1]),
+    unit: "%",
+    decimals: 3,
+    changePct: weeklyChangePct,
+    changeText: Number.isFinite(weeklyChangePct) ? `${weeklyChangePct > 0 ? "+" : ""}${weeklyChangePct.toFixed(2)}%` : "等待資料",
+    tone: weeklyChangePct > 0 ? "up" : weeklyChangePct < 0 ? "down" : "flat",
+    state: "即時",
+    source: "TradingView",
+    pairKey: "us-yield",
+  };
+}
+
+async function fetchSafeHavenYields() {
+  const results = await Promise.allSettled([
+    fetchTradingViewYield("US02Y", "美國 2Y 殖利率"),
+    fetchTradingViewYield("US10Y", "美國 10Y 殖利率"),
+  ]);
+  return results.map((result, index) => (
+    result.status === "fulfilled"
+      ? result.value
+      : {
+          name: index === 0 ? "美國 2Y 殖利率" : "美國 10Y 殖利率",
+          ticker: index === 0 ? "US02Y" : "US10Y",
+          value: null,
+          unit: "%",
+          decimals: 3,
+          changePct: null,
+          state: "讀取失敗",
+          source: "TradingView",
+          pairKey: "us-yield",
+        }
+  ));
 }
 
 async function buildFastMarketData() {
@@ -346,7 +601,7 @@ async function buildFastMarketData() {
   };
 
   await Promise.all(Object.entries(yahooGroups).map(async ([groupName, items]) => {
-    const quotes = await Promise.allSettled(items.map(([symbol, name, unit]) => fetchYahooQuote(symbol, name, unit)));
+    const quotes = await Promise.allSettled(items.map(([symbol, name, unit, pairKey]) => fetchYahooQuote(symbol, name, unit, pairKey)));
     groups[groupName].push(...quotes.map((quote, index) => {
       if (quote.status === "fulfilled") return quote.value;
       const [symbol, name] = items[index];
@@ -354,7 +609,10 @@ async function buildFastMarketData() {
     }));
   }));
 
+  groups.safeHaven.splice(1, 0, ...(await fetchSafeHavenYields()));
+
   const taiwanIndexExtras = await Promise.allSettled([
+    fetchHistockTaiex(),
     fetchHistockQuote({ code: "TWOI", name: "櫃買指數", sourceName: "櫃檯指數" }),
     fetchCmoneyNightFuture(),
     fetchHistockQuote({ code: "TWN", name: "富台指", sourceName: "富台期" }),
@@ -366,11 +624,35 @@ async function buildFastMarketData() {
 }
 
 async function buildFlowData() {
+  const turnover = await fetchTwseMarketTurnover().catch(() => ({
+    name: "上市成交量",
+    ticker: "TWSE",
+    value: null,
+    unit: " 億",
+    changePct: null,
+    state: "讀取失敗",
+    source: "TWSE MI_INDEX 證券合計",
+    refreshRule: "15:15 日更",
+    fullRow: true,
+  }));
   const institutionalFlows = await fetchTwseInstitutionalFlows().catch(() => [
-    { name: "外資買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "15:15 日更" },
-    { name: "投信買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "15:15 日更" },
-    { name: "自營商買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "15:15 日更" },
+    { name: "外資買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "15:15 日更", pairKey: "flow-institutional" },
+    { name: "投信買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "15:15 日更", pairKey: "flow-institutional" },
+    { name: "自營商買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "15:15 日更", pairKey: "flow-dealer-public" },
   ]);
+  const publicBank = await fetchWantgooPublicBankNetBuy().catch(() => ({
+    name: "八大官股買賣超",
+    ticker: "上市",
+    value: null,
+    unit: " 億",
+    changePct: null,
+    changeText: "來源阻擋",
+    tone: "flat",
+    state: "讀取失敗",
+    source: "WantGoo 合計(萬)",
+    refreshRule: "15:15 日更",
+    pairKey: "flow-dealer-public",
+  }));
   const taifexOpenInterest = await fetchTaifexForeignOpenInterest().catch(() => ({
     name: "外資期貨淨空單",
     ticker: "TXF",
@@ -379,6 +661,7 @@ async function buildFlowData() {
     state: "讀取失敗",
     source: "TAIFEX",
     refreshRule: "15:15 日更",
+    pairKey: "flow-futures-margin",
   }));
   const twseMargin = await fetchTwseMarginBalance().catch(() => ({
     name: "上市融資餘額",
@@ -388,9 +671,32 @@ async function buildFlowData() {
     state: "讀取失敗",
     source: "TWSE MI_MARGN 今日餘額",
     refreshRule: "21:15 日更",
+    pairKey: "flow-futures-margin",
+  }));
+  const retailRatio = await fetchMacromicroRetailRatio().catch(() => ({
+    name: "散戶多空比",
+    ticker: "微台指",
+    value: null,
+    unit: "%",
+    changePct: null,
+    changeText: "來源阻擋",
+    tone: "flat",
+    state: "讀取失敗",
+    source: "MacroMicro",
+    refreshRule: "15:15 日更",
+    fullRow: true,
   }));
 
-  return [...institutionalFlows, taifexOpenInterest, twseMargin];
+  return [
+    turnover,
+    institutionalFlows[0],
+    institutionalFlows[1],
+    institutionalFlows[2],
+    publicBank,
+    taifexOpenInterest,
+    twseMargin,
+    retailRatio,
+  ];
 }
 
 function nextTaipeiUpdate(hour, minute, now = new Date()) {

@@ -30,10 +30,6 @@
 
       <section class="summary-strip" aria-label="市場總覽">
         <article>
-          <span>風險溫度</span>
-          <strong id="riskTone">讀取中</strong>
-        </article>
-        <article>
           <span>最後更新</span>
           <strong id="lastUpdated">--</strong>
         </article>
@@ -114,29 +110,36 @@
         mode: "demo",
         groups: {
           taiwanIndex: [
-            { name: "加權指數", ticker: "^TWII", value: "待連線", changePct: null, state: "資料源" },
+            { name: "加權指數", ticker: "TAIEX", value: "待連線", changePct: null, state: "資料源" },
             { name: "櫃買指數", ticker: "^TWOII", value: "待連線", changePct: null, state: "資料源" },
             { name: "台指期夜盤", ticker: "TXF 夜盤", value: "待接期交所", changePct: null, state: "需設定" },
             { name: "富台指", ticker: "FTSE Taiwan", value: "待接資料源", changePct: null, state: "需設定" },
           ],
           taiwanFlow: [
-            { name: "外資買賣超", ticker: "上市櫃", value: "待接 TWSE/TPEx", changePct: null, state: "盤後" },
-            { name: "投信買賣超", ticker: "上市櫃", value: "待接 TWSE/TPEx", changePct: null, state: "盤後" },
-            { name: "自營商買賣超", ticker: "上市櫃", value: "待接 TWSE/TPEx", changePct: null, state: "盤後" },
-            { name: "外資期貨淨空單", ticker: "TAIFEX", value: "待接 WantGoo", changePct: null, state: "15:15 日更" },
-            { name: "上市融資餘額", ticker: "TWSE", value: "待接 WantGoo", changePct: null, state: "21:15 日更" },
+            { name: "上市成交量", ticker: "TWSE", value: "待連線", changePct: null, state: "資料源", fullRow: true },
+            { name: "外資買賣超", ticker: "上市", value: "待接 TWSE", changePct: null, state: "盤後", pairKey: "flow-institutional" },
+            { name: "投信買賣超", ticker: "上市", value: "待接 TWSE", changePct: null, state: "盤後", pairKey: "flow-institutional" },
+            { name: "自營商買賣超", ticker: "上市", value: "待接 TWSE", changePct: null, state: "盤後", pairKey: "flow-dealer-public" },
+            { name: "八大官股買賣超", ticker: "上市", value: "待接 WantGoo", changePct: null, state: "15:15 日更", pairKey: "flow-dealer-public" },
+            { name: "外資期貨淨空單", ticker: "TAIFEX", value: "待接 TAIFEX", changePct: null, state: "15:15 日更", pairKey: "flow-futures-margin" },
+            { name: "上市融資餘額", ticker: "TWSE", value: "待接 TWSE", changePct: null, state: "21:15 日更", pairKey: "flow-futures-margin" },
+            { name: "散戶多空比", ticker: "微台指", value: "待接 MacroMicro", changePct: null, state: "15:15 日更", fullRow: true },
           ],
           globalIndex: [
             { name: "日經 225", ticker: "^N225", value: "待連線", changePct: null, state: "資料源" },
             { name: "KOSPI", ticker: "^KS11", value: "待連線", changePct: null, state: "資料源" },
-            { name: "S&P 500", ticker: "^GSPC", value: "待連線", changePct: null, state: "資料源" },
-            { name: "Nasdaq", ticker: "^IXIC", value: "待連線", changePct: null, state: "資料源" },
-            { name: "Dow Jones", ticker: "^DJI", value: "待連線", changePct: null, state: "資料源" },
+            { name: "S&P 500", ticker: "^GSPC", value: "待連線", changePct: null, state: "資料源", pairKey: "sp500" },
+            { name: "S&P 500 期貨", ticker: "ES=F", value: "待連線", changePct: null, state: "資料源", pairKey: "sp500" },
+            { name: "Nasdaq", ticker: "^IXIC", value: "待連線", changePct: null, state: "資料源", pairKey: "nasdaq" },
+            { name: "Nasdaq 100 期貨", ticker: "NQ=F", value: "待連線", changePct: null, state: "資料源", pairKey: "nasdaq" },
+            { name: "Dow Jones", ticker: "^DJI", value: "待連線", changePct: null, state: "資料源", pairKey: "dow" },
+            { name: "道瓊期貨", ticker: "YM=F", value: "待連線", changePct: null, state: "資料源", pairKey: "dow" },
             { name: "費城半導體", ticker: "^SOX", value: "待連線", changePct: null, state: "資料源" },
           ],
           safeHaven: [
             { name: "美元指數", ticker: "DX-Y.NYB", value: "待連線", changePct: null, state: "資料源" },
-            { name: "美國 10Y 殖利率", ticker: "^TNX", value: "待連線", changePct: null, state: "資料源" },
+            { name: "美國 2Y 殖利率", ticker: "US02Y", value: "待連線", changePct: null, state: "資料源", decimals: 3, pairKey: "us-yield" },
+            { name: "美國 10Y 殖利率", ticker: "US10Y", value: "待連線", changePct: null, state: "資料源", decimals: 3, pairKey: "us-yield" },
             { name: "黃金", ticker: "GC=F", value: "待連線", changePct: null, state: "資料源" },
             { name: "布蘭特原油", ticker: "BZ=F", value: "待連線", changePct: null, state: "資料源" },
             { name: "VIX", ticker: "^VIX", value: "待連線", changePct: null, state: "資料源" },
@@ -144,10 +147,10 @@
         },
       };
 
-      function formatNumber(value, unit = "") {
+      function formatNumber(value, unit = "", decimals = 2) {
         if (value === null || value === undefined || value === "") return "--";
         if (typeof value === "string") return value;
-        return `${Intl.NumberFormat("zh-TW", { maximumFractionDigits: 2 }).format(value)}${unit}`;
+        return `${Intl.NumberFormat("zh-TW", { maximumFractionDigits: decimals, minimumFractionDigits: value % 1 === 0 ? 0 : decimals }).format(value)}${unit}`;
       }
 
       function formatChange(item) {
@@ -161,19 +164,43 @@
       function renderCard(item) {
         const node = document.querySelector("#metricCardTemplate").content.firstElementChild.cloneNode(true);
         const changeClass = item.tone || (item.changePct > 0 ? "up" : item.changePct < 0 ? "down" : "flat");
+        if (item.fullRow) node.classList.add("full-row");
         node.querySelector("h3").textContent = item.name;
         node.querySelector("p").textContent = item.ticker || "";
         node.querySelector(".market-state").textContent = item.state || "更新";
-        node.querySelector(".metric-value").textContent = formatNumber(item.value, item.unit || "");
+        node.querySelector(".metric-value").textContent = formatNumber(item.value, item.unit || "", item.decimals ?? 2);
         node.querySelector(".change").textContent = formatChange(item);
         node.querySelector(".change").classList.add(changeClass);
         node.querySelector(".source").textContent = item.refreshRule ? `${item.source || "待設定"} · ${item.refreshRule}` : item.source || "待設定";
         return node;
       }
 
+      function renderItems(items) {
+        const nodes = [];
+        const paired = new Set();
+        items.forEach((item) => {
+          if (!item.pairKey || paired.has(item.pairKey)) {
+            if (!item.pairKey) nodes.push(renderCard(item));
+            return;
+          }
+          const pairItems = items.filter((candidate) => candidate.pairKey === item.pairKey);
+          if (pairItems.length < 2) {
+            nodes.push(renderCard(item));
+            paired.add(item.pairKey);
+            return;
+          }
+          const pair = document.createElement("div");
+          pair.className = "metric-pair";
+          pair.replaceChildren(...pairItems.slice(0, 2).map(renderCard));
+          nodes.push(pair);
+          paired.add(item.pairKey);
+        });
+        return nodes;
+      }
+
       function render(data) {
         Object.entries(sections).forEach(([key, element]) => {
-          element.replaceChildren(...(data.groups[key] || []).map(renderCard));
+          element.replaceChildren(...renderItems(data.groups[key] || []));
         });
 
         const updated = new Date(data.generatedAt);
@@ -186,17 +213,7 @@
           second: "2-digit",
         });
         document.querySelector("#dataStatus").textContent = data.mode === "live" ? "即時資料" : "示範 / 待接資料源";
-        document.querySelector("#riskTone").textContent = computeRiskTone(data);
         refreshMs = data.refresh?.marketMs || DEFAULT_REFRESH_MS;
-      }
-
-      function computeRiskTone(data) {
-        const vix = data.groups.safeHaven?.find((item) => item.ticker === "^VIX");
-        const dollar = data.groups.safeHaven?.find((item) => item.ticker === "DX-Y.NYB");
-        if (!vix?.value || typeof vix.value !== "number") return "等待 VIX";
-        if (vix.value >= 25) return "偏防禦";
-        if (vix.value < 15 && dollar?.changePct <= 0.3) return "風險偏好";
-        return "中性觀望";
       }
 
       async function refresh() {
