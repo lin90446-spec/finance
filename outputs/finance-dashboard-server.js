@@ -1,6 +1,11 @@
 const http = require("node:http");
 const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
+const { execFile } = require("node:child_process");
+const { promisify } = require("node:util");
+
+const execFileAsync = promisify(execFile);
 
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -9,6 +14,14 @@ const ONE_MINUTE = 60 * 1000;
 const ONE_DAY = 24 * 60 * 60 * 1000;
 let marketCache = null;
 let flowCache = null;
+
+function loadOptionalModule(name) {
+  try {
+    return require(name);
+  } catch {
+    return require(`/Users/chenyilin/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/${name}`);
+  }
+}
 
 const yahooGroups = {
   taiwanIndex: [],
@@ -402,6 +415,103 @@ async function fetchWantgooJson(pathname, referer = "https://www.wantgoo.com/fut
   return response.json();
 }
 
+async function fetchSpfRetailRatioPdfInfo() {
+  const listUrl = "https://www.spf.com.tw/sinopacSPF/research/list.do?id=1709f20d3ff00000d8e2039e8984ed51";
+  const response = await fetch(listUrl, {
+    headers: {
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "accept-language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+      "user-agent": "Mozilla/5.0 market-dashboard",
+    },
+  });
+  if (!response.ok) throw new Error(`SinoPac Futures list ${response.status}`);
+  const html = await response.text();
+  const match = html.match(/<li[^>]*>[\s\S]*?<a href="([^"]+\.pdf)"[^>]*>\s*台指期籌碼快訊\s*<\/a>\s*<span>(\d{4}\/\d{2}\/\d{2})<\/span>/);
+  if (!match) throw new Error("SinoPac Futures chip PDF missing");
+  return {
+    url: new URL(match[1], "https://www.spf.com.tw").toString(),
+    date: match[2],
+  };
+}
+
+function findPdftoppmPath() {
+  return process.env.PDFTOPPM_PATH || "/Users/chenyilin/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/pdftoppm";
+}
+
+async function cropImage(imagePath, crop) {
+  const sharp = loadOptionalModule("sharp");
+  const image = sharp(imagePath);
+  const meta = await image.metadata();
+  const scaleX = meta.width / 1161;
+  const scaleY = meta.height / 3384;
+  const cropPath = `${imagePath}-${crop.name}.png`;
+  await image.clone().extract({
+    left: Math.round(crop.left * scaleX),
+    top: Math.round(crop.top * scaleY),
+    width: Math.round(crop.width * scaleX),
+    height: Math.round(crop.height * scaleY),
+  }).png().toFile(cropPath);
+  return cropPath;
+}
+
+async function ocrNumberFiles(imagePaths) {
+  const { createWorker } = loadOptionalModule("tesseract.js");
+  const worker = await createWorker("eng");
+  await worker.setParameters({ tessedit_char_whitelist: "+-.0123456789%" });
+  try {
+    const values = [];
+    for (const imagePath of imagePaths) {
+      const { data } = await worker.recognize(imagePath);
+      const match = data.text.match(/[+-]?\d+(?:\.\d+)?/);
+      if (!match) throw new Error(`SinoPac OCR ${path.basename(imagePath)} missing`);
+      values.push(Number(match[0]));
+    }
+    return values;
+  } finally {
+    await worker.terminate();
+  }
+}
+
+async function fetchSpfRetailRatio() {
+  const pdf = await fetchSpfRetailRatioPdfInfo();
+  const response = await fetch(pdf.url, {
+    headers: { "user-agent": "Mozilla/5.0 market-dashboard" },
+  });
+  if (!response.ok) throw new Error(`SinoPac Futures PDF ${response.status}`);
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "spf-chip-"));
+  try {
+    const pdfPath = path.join(tempDir, "chip.pdf");
+    await fs.writeFile(pdfPath, Buffer.from(await response.arrayBuffer()));
+    const prefix = path.join(tempDir, "chip");
+    await execFileAsync(findPdftoppmPath(), ["-png", "-r", "160", pdfPath, prefix], { timeout: 20000 });
+    const imagePath = `${prefix}-1.png`;
+    const [previousCrop, currentCrop] = await Promise.all([
+      cropImage(imagePath, { name: "previous", left: 560, top: 1435, width: 270, height: 110 }),
+      cropImage(imagePath, { name: "current", left: 840, top: 1435, width: 290, height: 110 }),
+    ]);
+    const [previousValue, currentValue] = await ocrNumberFiles([previousCrop, currentCrop]);
+    if (!Number.isFinite(currentValue) || !Number.isFinite(previousValue)) {
+      throw new Error("SinoPac retail ratio OCR invalid");
+    }
+    const diff = currentValue - previousValue;
+    return {
+      name: "散戶多空比",
+      ticker: "微台指",
+      value: currentValue,
+      unit: "%",
+      changePct: null,
+      changeText: `${diff > 0 ? "+" : ""}${diff.toFixed(2)} 個百分點`,
+      tone: diff > 0 ? "up" : diff < 0 ? "down" : "flat",
+      state: pdf.date.slice(5),
+      source: "永豐期貨 PDF",
+      refreshRule: "15:15 日更",
+      fullRow: true,
+    };
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function fetchMacromicroRetailRatio() {
   const response = await fetch("https://www.macromicro.me/charts/110457/tw-tmf-long-to-short-ratio-of-individual-player", {
     headers: {
@@ -673,7 +783,7 @@ async function buildFlowData() {
     refreshRule: "21:15 日更",
     pairKey: "flow-futures-margin",
   }));
-  const retailRatio = await fetchMacromicroRetailRatio().catch(() => ({
+  const retailRatio = await fetchSpfRetailRatio().catch(() => fetchMacromicroRetailRatio()).catch(() => ({
     name: "散戶多空比",
     ticker: "微台指",
     value: null,
@@ -682,7 +792,7 @@ async function buildFlowData() {
     changeText: "來源阻擋",
     tone: "flat",
     state: "讀取失敗",
-    source: "MacroMicro",
+    source: "永豐期貨 PDF",
     refreshRule: "15:15 日更",
     fullRow: true,
   }));

@@ -7,6 +7,10 @@
   "scripts": {
     "start": "node finance-dashboard-server.js"
   },
+  "dependencies": {
+    "sharp": "^0.34.3",
+    "tesseract.js": "^7.0.0"
+  },
   "engines": {
     "node": ">=20"
   }
