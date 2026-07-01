@@ -651,30 +651,39 @@ async function fetchTaifexForeignOpenInterest() {
 }
 
 async function fetchTradingViewYield(symbol, name) {
-  const response = await fetch(`https://tw.tradingview.com/symbols/TVC-${symbol}/`, {
-    headers: { "user-agent": "Mozilla/5.0 market-dashboard" },
+  const response = await fetch("https://scanner.tradingview.com/bonds/scan", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 market-dashboard",
+    },
+    body: JSON.stringify({
+      symbols: {
+        tickers: [`TVC:${symbol}`],
+        query: { types: [] },
+      },
+      columns: ["close", "change", "change_abs"],
+    }),
   });
   if (!response.ok) throw new Error(`TradingView ${symbol} ${response.status}`);
-  const html = await response.text();
-  const match = html.match(/當期殖利率為\s*([\d.]+)%/);
-  if (!match) throw new Error(`TradingView ${symbol} yield missing`);
-  const changeMatch = html.match(/過去一週(上漲|下降)了\s*([−+\-\d.]+)%/);
-  let weeklyChangePct = null;
-  if (changeMatch) {
-    weeklyChangePct = Number(changeMatch[2].replace("−", "-"));
-    if (changeMatch[1] === "下降" && weeklyChangePct > 0) {
-      weeklyChangePct *= -1;
-    }
-  }
+  const payload = await response.json();
+  const row = payload.data?.find((item) => item.s === `TVC:${symbol}`)?.d;
+  if (!Array.isArray(row)) throw new Error(`TradingView ${symbol} yield missing`);
+  const [value, changePct, changeAbs] = row.map(Number);
+  if (!Number.isFinite(value)) throw new Error(`TradingView ${symbol} yield missing`);
+  const changeBp = Number.isFinite(changeAbs) ? changeAbs * 100 : null;
+  const changeText = Number.isFinite(changeBp) && Number.isFinite(changePct)
+    ? `${changeBp > 0 ? "+" : ""}${changeBp.toFixed(1)} bp / ${changePct > 0 ? "+" : ""}${changePct.toFixed(2)}%`
+    : "等待資料";
   return {
     name,
     ticker: symbol,
-    value: Number(match[1]),
+    value,
     unit: "%",
     decimals: 3,
-    changePct: weeklyChangePct,
-    changeText: Number.isFinite(weeklyChangePct) ? `${weeklyChangePct > 0 ? "+" : ""}${weeklyChangePct.toFixed(2)}%` : "等待資料",
-    tone: weeklyChangePct > 0 ? "up" : weeklyChangePct < 0 ? "down" : "flat",
+    changePct: Number.isFinite(changePct) ? changePct : null,
+    changeText,
+    tone: changeBp > 0 ? "up" : changeBp < 0 ? "down" : "flat",
     state: "即時",
     source: "TradingView",
     pairKey: "us-yield",
