@@ -1,9 +1,0 @@
-services:
-  - type: web
-    name: finance-dashboard
-    env: node
-    plan: free
-    rootDir: outputs
-    buildCommand: npm install
-    startCommand: npm start
-    autoDeploy: true
