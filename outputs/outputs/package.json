@@ -1,0 +1,17 @@
+{
+  "name": "finance-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Finance dashboard with market data refresh.",
+  "main": "finance-dashboard-server.js",
+  "scripts": {
+    "start": "node finance-dashboard-server.js"
+  },
+  "dependencies": {
+    "sharp": "^0.34.3",
+    "tesseract.js": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
