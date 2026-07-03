@@ -207,11 +207,21 @@ h1 {
 .market-state {
   flex: 0 0 auto;
   border-radius: 999px;
-  background: #e9f1ee;
-  color: #42514d;
+  background: rgba(167, 101, 16, 0.12);
+  color: var(--amber);
   padding: 4px 8px;
   font-size: 0.72rem;
   font-weight: 700;
+}
+
+.market-state.closed {
+  background: #e9f1ee;
+  color: var(--ink);
+}
+
+.market-state.updated {
+  background: rgba(167, 101, 16, 0.12);
+  color: var(--amber);
 }
 
 .metric-value {

@@ -67,6 +67,82 @@ function mime(filePath) {
   return "text/html; charset=utf-8";
 }
 
+function zonedParts(timeZone, now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  return Object.fromEntries(parts.map((part) => [part.type, part.value]));
+}
+
+function zonedMinutes(timeZone, now = new Date()) {
+  const parts = zonedParts(timeZone, now);
+  return Number(parts.hour) * 60 + Number(parts.minute);
+}
+
+function isWeekday(parts) {
+  return !["Sat", "Sun"].includes(parts.weekday);
+}
+
+function isTaiwanEquityOpen(now = new Date()) {
+  const parts = zonedParts("Asia/Taipei", now);
+  const minutes = zonedMinutes("Asia/Taipei", now);
+  return isWeekday(parts) && minutes >= 9 * 60 && minutes <= 13 * 60 + 30;
+}
+
+function isTaiwanFutureOpen(now = new Date()) {
+  const parts = zonedParts("Asia/Taipei", now);
+  const minutes = zonedMinutes("Asia/Taipei", now);
+  if (parts.weekday === "Sun") return false;
+  if (parts.weekday === "Sat") return minutes < 5 * 60;
+  return minutes >= 8 * 60 + 45 || minutes < 5 * 60;
+}
+
+function isSgxTaiwanIndexFutureOpen(now = new Date()) {
+  const parts = zonedParts("Asia/Singapore", now);
+  const minutes = zonedMinutes("Asia/Singapore", now);
+  const beforeMorningClose = minutes < 5 * 60 + 15;
+  const daySession = minutes >= 8 * 60 + 45 && minutes <= 13 * 60 + 50;
+  const nightSession = minutes >= 14 * 60 + 15;
+  if (parts.weekday === "Sun") return false;
+  if (parts.weekday === "Sat") return beforeMorningClose;
+  if (parts.weekday === "Mon") return daySession || nightSession;
+  return beforeMorningClose || daySession || nightSession;
+}
+
+function histockMarketStatus(marketType) {
+  if (marketType === "sgxTaiwanFuture") {
+    return {
+      ...closedState(isSgxTaiwanIndexFutureOpen()),
+      openState: "夜盤",
+    };
+  }
+  return {
+    ...closedState(isTaiwanEquityOpen()),
+    openState: null,
+  };
+}
+
+function isUsYieldOpen(now = new Date()) {
+  const parts = zonedParts("America/New_York", now);
+  const minutes = zonedMinutes("America/New_York", now);
+  return isWeekday(parts) && minutes >= 8 * 60 && minutes <= 17 * 60;
+}
+
+function closedState(isOpen) {
+  return isOpen ? null : { state: "休市", marketClosed: true };
+}
+
+function isYahooRegularOpen(meta, now = Date.now()) {
+  const regular = meta?.currentTradingPeriod?.regular;
+  if (!regular?.start || !regular?.end) return meta?.marketState !== "CLOSED";
+  const nowSeconds = Math.floor(now / 1000);
+  return nowSeconds >= regular.start && nowSeconds <= regular.end;
+}
+
 async function fetchYahooQuote(symbol, name, unit = "", pairKey = "") {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1m`;
   const response = await fetch(url, {
@@ -80,13 +156,15 @@ async function fetchYahooQuote(symbol, name, unit = "", pairKey = "") {
   const value = meta.regularMarketPrice ?? meta.previousClose ?? null;
   const previous = meta.previousClose ?? meta.chartPreviousClose ?? null;
   const changePct = value && previous ? ((value - previous) / previous) * 100 : null;
+  const isClosed = !isYahooRegularOpen(meta);
   return {
     name,
     ticker: symbol,
     value,
     unit,
     changePct,
-    state: meta.marketState || "更新",
+    state: isClosed ? "休市" : meta.marketState || "更新",
+    marketClosed: isClosed,
     source: "Yahoo Finance",
     pairKey,
   };
@@ -147,7 +225,9 @@ function signedText(value, unit = "") {
 
 function withUpdatedAt(items, timestamp) {
   const updatedAt = new Date(timestamp).toISOString();
-  return items.map((item) => ({ ...item, updatedAt: item.updatedAt || updatedAt }));
+  return items.map((item) => (
+    item.marketClosed ? { ...item, updatedAt: undefined } : { ...item, updatedAt: item.updatedAt || updatedAt }
+  ));
 }
 
 function htmlToLines(html) {
@@ -264,6 +344,7 @@ async function fetchCmoneyNightFuture() {
   const change = Number(props["漲跌"]);
   const changePct = Number(props["漲跌幅"]);
   if (!Number.isFinite(value)) throw new Error("CMoney TXF1 price missing");
+  const closeInfo = closedState(isTaiwanFutureOpen());
   return {
     name: "台指期夜盤",
     ticker: "TXF1",
@@ -271,12 +352,13 @@ async function fetchCmoneyNightFuture() {
     changePct: Number.isFinite(changePct) ? changePct : null,
     changeText: Number.isFinite(change) && Number.isFinite(changePct) ? quoteText(change, changePct) : undefined,
     tone: change > 0 ? "up" : change < 0 ? "down" : "flat",
-    state: "夜盤",
+    state: closeInfo?.state || "夜盤",
+    marketClosed: closeInfo?.marketClosed,
     source: "CMoney",
   };
 }
 
-async function fetchHistockQuote({ code, name, sourceName }) {
+async function fetchHistockQuote({ code, name, sourceName, marketType = "taiwanEquity" }) {
   const response = await fetch(`https://histock.tw/index-tw/${code}`, {
     headers: { "user-agent": "Mozilla/5.0 market-dashboard" },
   });
@@ -292,6 +374,7 @@ async function fetchHistockQuote({ code, name, sourceName }) {
   if (!Number.isFinite(value) || change === null || changePct === null) {
     throw new Error(`HiStock ${code} quote missing`);
   }
+  const marketStatus = histockMarketStatus(marketType);
   return {
     name,
     ticker: code,
@@ -299,7 +382,8 @@ async function fetchHistockQuote({ code, name, sourceName }) {
     changePct,
     changeText: quoteText(change, changePct),
     tone: change > 0 ? "up" : change < 0 ? "down" : "flat",
-    state: timeLine ? timeLine.replace("本地時間:", "") : "更新",
+    state: marketStatus.state || marketStatus.openState || (timeLine ? timeLine.replace("本地時間:", "") : "更新"),
+    marketClosed: marketStatus.marketClosed,
     source: `HiStock ${sourceName}`,
   };
 }
@@ -320,6 +404,7 @@ async function fetchHistockTaiex() {
   if (!Number.isFinite(value) || change === null || changePct === null) {
     throw new Error("HiStock TAIEX quote missing");
   }
+  const closeInfo = closedState(isTaiwanEquityOpen());
   return {
     name: "加權指數",
     ticker: "TAIEX",
@@ -327,7 +412,8 @@ async function fetchHistockTaiex() {
     changePct,
     changeText: quoteText(change, changePct),
     tone: change > 0 ? "up" : change < 0 ? "down" : "flat",
-    state: timeLine ? timeLine.replace("本地時間:", "") : "更新",
+    state: closeInfo?.state || (timeLine ? timeLine.replace("本地時間:", "") : "更新"),
+    marketClosed: closeInfo?.marketClosed,
     source: "HiStock 台股大盤",
   };
 }
@@ -687,6 +773,7 @@ async function fetchTradingViewYield(symbol, name) {
   const changeText = Number.isFinite(changeBp) && Number.isFinite(changePct)
     ? `${changeBp > 0 ? "+" : ""}${changeBp.toFixed(1)} bp / ${changePct > 0 ? "+" : ""}${changePct.toFixed(2)}%`
     : "等待資料";
+  const closeInfo = closedState(isUsYieldOpen());
   return {
     name,
     ticker: symbol,
@@ -696,7 +783,8 @@ async function fetchTradingViewYield(symbol, name) {
     changePct: Number.isFinite(changePct) ? changePct : null,
     changeText,
     tone: changeBp > 0 ? "up" : changeBp < 0 ? "down" : "flat",
-    state: "即時",
+    state: closeInfo?.state || "即時",
+    marketClosed: closeInfo?.marketClosed,
     source: "TradingView",
     pairKey: "us-yield",
   };
@@ -746,7 +834,7 @@ async function buildFastMarketData() {
     fetchHistockTaiex(),
     fetchHistockQuote({ code: "TWOI", name: "櫃買指數", sourceName: "櫃檯指數" }),
     fetchCmoneyNightFuture(),
-    fetchHistockQuote({ code: "TWN", name: "富台指", sourceName: "富台期" }),
+    fetchHistockQuote({ code: "TWN", name: "富台指", sourceName: "富台期", marketType: "sgxTaiwanFuture" }),
   ]);
   groups.taiwanIndex.push(...taiwanIndexExtras.map((result, index) => (
     result.status === "fulfilled" ? result.value : configuredPlaceholders.taiwanIndex[index]

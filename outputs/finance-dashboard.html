@@ -175,18 +175,25 @@
       function formatSource(item) {
         return [
           item.source || "待設定",
-          formatUpdatedAt(item.updatedAt),
           item.refreshRule,
         ].filter(Boolean).join(" · ");
+      }
+
+      function formatState(item) {
+        if (item.refreshRule) return item.state || "更新";
+        if (item.marketClosed) return "休市";
+        return formatUpdatedAt(item.updatedAt) || item.state || "更新";
       }
 
       function renderCard(item) {
         const node = document.querySelector("#metricCardTemplate").content.firstElementChild.cloneNode(true);
         const changeClass = item.tone || (item.changePct > 0 ? "up" : item.changePct < 0 ? "down" : "flat");
+        const stateClass = item.refreshRule || item.marketClosed ? "closed" : "updated";
         if (item.fullRow) node.classList.add("full-row");
         node.querySelector("h3").textContent = item.name;
         node.querySelector("p").textContent = item.ticker || "";
-        node.querySelector(".market-state").textContent = item.state || "更新";
+        node.querySelector(".market-state").textContent = formatState(item);
+        node.querySelector(".market-state").classList.add(stateClass);
         node.querySelector(".metric-value").textContent = formatNumber(item.value, item.unit || "", item.decimals ?? 2);
         node.querySelector(".change").textContent = formatChange(item);
         node.querySelector(".change").classList.add(changeClass);
