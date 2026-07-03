@@ -120,10 +120,10 @@
             { name: "外資買賣超", ticker: "上市", value: "待接 TWSE", changePct: null, state: "盤後", pairKey: "flow-institutional" },
             { name: "投信買賣超", ticker: "上市", value: "待接 TWSE", changePct: null, state: "盤後", pairKey: "flow-institutional" },
             { name: "自營商買賣超", ticker: "上市", value: "待接 TWSE", changePct: null, state: "盤後", pairKey: "flow-dealer-public" },
-            { name: "八大官股買賣超", ticker: "上市", value: "待接 WantGoo", changePct: null, state: "15:15 日更", pairKey: "flow-dealer-public" },
-            { name: "外資期貨淨空單", ticker: "TAIFEX", value: "待接 TAIFEX", changePct: null, state: "15:15 日更", pairKey: "flow-futures-margin" },
+            { name: "八大官股買賣超", ticker: "上市", value: "待接 WantGoo", changePct: null, state: "14:45 日更", pairKey: "flow-dealer-public" },
+            { name: "外資期貨淨空單", ticker: "TAIFEX", value: "待接 TAIFEX", changePct: null, state: "14:45 日更", pairKey: "flow-futures-margin" },
             { name: "上市融資餘額", ticker: "TWSE", value: "待接 TWSE", changePct: null, state: "21:15 日更", pairKey: "flow-futures-margin" },
-            { name: "散戶多空比", ticker: "微台指", value: "待接永豐 PDF", changePct: null, state: "15:15 日更", fullRow: true },
+            { name: "散戶多空比", ticker: "微台指", value: "待接永豐 PDF", changePct: null, state: "14:45 日更", fullRow: true },
           ],
           globalIndex: [
             { name: "日經 225", ticker: "^N225", value: "待連線", changePct: null, state: "資料源" },
@@ -161,6 +161,25 @@
         return `${sign}${changePct.toFixed(2)}%`;
       }
 
+      function formatUpdatedAt(value) {
+        if (!value) return "";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return "";
+        return `更新 ${date.toLocaleTimeString("zh-TW", {
+          hour12: false,
+          hour: "2-digit",
+          minute: "2-digit",
+        })}`;
+      }
+
+      function formatSource(item) {
+        return [
+          item.source || "待設定",
+          formatUpdatedAt(item.updatedAt),
+          item.refreshRule,
+        ].filter(Boolean).join(" · ");
+      }
+
       function renderCard(item) {
         const node = document.querySelector("#metricCardTemplate").content.firstElementChild.cloneNode(true);
         const changeClass = item.tone || (item.changePct > 0 ? "up" : item.changePct < 0 ? "down" : "flat");
@@ -171,7 +190,7 @@
         node.querySelector(".metric-value").textContent = formatNumber(item.value, item.unit || "", item.decimals ?? 2);
         node.querySelector(".change").textContent = formatChange(item);
         node.querySelector(".change").classList.add(changeClass);
-        node.querySelector(".source").textContent = item.refreshRule ? `${item.source || "待設定"} · ${item.refreshRule}` : item.source || "待設定";
+        node.querySelector(".source").textContent = formatSource(item);
         return node;
       }
 

@@ -129,6 +129,13 @@ function contractCompareText(current, previous) {
   return `較前日 ${sign}${diff.toLocaleString("zh-TW")} 口`;
 }
 
+function contractCompareTone(current, previous) {
+  const diff = current - previous;
+  if (diff > 0) return "up";
+  if (diff < 0) return "down";
+  return "flat";
+}
+
 function quoteText(change, changePct) {
   const sign = change > 0 ? "+" : "";
   return `${sign}${change.toFixed(2)} / ${sign}${changePct.toFixed(2)}%`;
@@ -136,6 +143,11 @@ function quoteText(change, changePct) {
 
 function signedText(value, unit = "") {
   return `${value > 0 ? "+" : ""}${value.toLocaleString("zh-TW", { maximumFractionDigits: 2 })}${unit}`;
+}
+
+function withUpdatedAt(items, timestamp) {
+  const updatedAt = new Date(timestamp).toISOString();
+  return items.map((item) => ({ ...item, updatedAt: item.updatedAt || updatedAt }));
 }
 
 function htmlToLines(html) {
@@ -197,7 +209,7 @@ async function fetchTwseInstitutionalFlows() {
       tone: flowTone(foreignNetYi),
       state: date,
       source: "TWSE BFI82U",
-      refreshRule: "15:15 日更",
+      refreshRule: "14:45 日更",
       pairKey: "flow-institutional",
     },
     {
@@ -210,7 +222,7 @@ async function fetchTwseInstitutionalFlows() {
       tone: flowTone(investmentTrustNetYi),
       state: date,
       source: "TWSE BFI82U",
-      refreshRule: "15:15 日更",
+      refreshRule: "14:45 日更",
       pairKey: "flow-institutional",
     },
     {
@@ -223,7 +235,7 @@ async function fetchTwseInstitutionalFlows() {
       tone: flowTone(dealerNetYi),
       state: date,
       source: "TWSE BFI82U",
-      refreshRule: "15:15 日更",
+      refreshRule: "14:45 日更",
       pairKey: "flow-dealer-public",
     },
   ];
@@ -380,7 +392,7 @@ async function fetchTwseMarketTurnover() {
     tone: "flat",
     state: parseDateState(payload.date),
     source: "TWSE MI_INDEX 證券合計",
-    refreshRule: "15:15 日更",
+    refreshRule: "14:45 日更",
     fullRow: true,
   };
 }
@@ -500,11 +512,11 @@ async function fetchSpfRetailRatio() {
       value: currentValue,
       unit: "%",
       changePct: null,
-      changeText: `${diff > 0 ? "+" : ""}${diff.toFixed(2)} 個百分點`,
+      changeText: `${diff > 0 ? "+" : ""}${diff.toFixed(2)}%`,
       tone: diff > 0 ? "up" : diff < 0 ? "down" : "flat",
       state: pdf.date.slice(5),
       source: "永豐期貨 PDF",
-      refreshRule: "15:15 日更",
+      refreshRule: "14:45 日更",
       fullRow: true,
     };
   } finally {
@@ -533,11 +545,11 @@ async function fetchMacromicroRetailRatio() {
     value: currentValue,
     unit: "%",
     changePct: null,
-    changeText: `${diff > 0 ? "+" : ""}${diff.toFixed(2)} 個百分點`,
+    changeText: `${diff > 0 ? "+" : ""}${diff.toFixed(2)}%`,
     tone: diff > 0 ? "up" : diff < 0 ? "down" : "flat",
     state: match[1].slice(5).replace("-", "/"),
     source: "MacroMicro",
-    refreshRule: "15:15 日更",
+    refreshRule: "14:45 日更",
     fullRow: true,
   };
 }
@@ -566,7 +578,7 @@ async function fetchWantgooPublicBankNetBuy() {
     tone: flowTone(totalYi),
     state: new Date(current.date).toLocaleDateString("zh-TW", { timeZone: "Asia/Taipei", month: "2-digit", day: "2-digit" }),
     source: "WantGoo 合計(萬)",
-    refreshRule: "15:15 日更",
+    refreshRule: "14:45 日更",
     pairKey: "flow-dealer-public",
   };
 }
@@ -642,10 +654,10 @@ async function fetchTaifexForeignOpenInterest() {
     unit: " 口",
     changePct: null,
     changeText: contractCompareText(current.value, previous.value),
-    tone: current.value < 0 ? "down" : current.value > 0 ? "up" : "flat",
+    tone: contractCompareTone(current.value, previous.value),
     state: current.state,
     source: "TAIFEX",
-    refreshRule: "15:15 日更",
+    refreshRule: "14:45 日更",
     pairKey: "flow-futures-margin",
   };
 }
@@ -751,13 +763,13 @@ async function buildFlowData() {
     changePct: null,
     state: "讀取失敗",
     source: "TWSE MI_INDEX 證券合計",
-    refreshRule: "15:15 日更",
+    refreshRule: "14:45 日更",
     fullRow: true,
   }));
   const institutionalFlows = await fetchTwseInstitutionalFlows().catch(() => [
-    { name: "外資買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "15:15 日更", pairKey: "flow-institutional" },
-    { name: "投信買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "15:15 日更", pairKey: "flow-institutional" },
-    { name: "自營商買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "15:15 日更", pairKey: "flow-dealer-public" },
+    { name: "外資買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "14:45 日更", pairKey: "flow-institutional" },
+    { name: "投信買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "14:45 日更", pairKey: "flow-institutional" },
+    { name: "自營商買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "14:45 日更", pairKey: "flow-dealer-public" },
   ]);
   const publicBank = await fetchWantgooPublicBankNetBuy().catch(() => ({
     name: "八大官股買賣超",
@@ -769,7 +781,7 @@ async function buildFlowData() {
     tone: "flat",
     state: "讀取失敗",
     source: "WantGoo 合計(萬)",
-    refreshRule: "15:15 日更",
+    refreshRule: "14:45 日更",
     pairKey: "flow-dealer-public",
   }));
   const taifexOpenInterest = await fetchTaifexForeignOpenInterest().catch(() => ({
@@ -779,7 +791,7 @@ async function buildFlowData() {
     changePct: null,
     state: "讀取失敗",
     source: "TAIFEX",
-    refreshRule: "15:15 日更",
+    refreshRule: "14:45 日更",
     pairKey: "flow-futures-margin",
   }));
   const twseMargin = await fetchTwseMarginBalance().catch(() => ({
@@ -802,7 +814,7 @@ async function buildFlowData() {
     tone: "flat",
     state: "讀取失敗",
     source: "永豐期貨 PDF",
-    refreshRule: "15:15 日更",
+    refreshRule: "14:45 日更",
     fullRow: true,
   }));
 
@@ -827,7 +839,7 @@ function nextTaipeiUpdate(hour, minute, now = new Date()) {
 }
 
 function nextFlowRefreshAt(now = new Date()) {
-  const nextInstitutional = nextTaipeiUpdate(15, 15, now);
+  const nextInstitutional = nextTaipeiUpdate(14, 45, now);
   const nextMargin = nextTaipeiUpdate(21, 15, now);
   return Math.min(nextInstitutional, nextMargin);
 }
@@ -848,13 +860,15 @@ async function buildMarketData() {
       marketMs: ONE_MINUTE,
       taiwanFlowNextAt: new Date(flowCache.nextRefreshAt).toISOString(),
       taiwanFlowRules: {
-        institutional: "每日 15:15",
+        institutional: "每日 14:45",
         margin: "每日 21:15",
       },
     },
     groups: {
-      ...marketCache.data,
-      taiwanFlow: flowCache.data,
+      taiwanIndex: withUpdatedAt(marketCache.data.taiwanIndex, marketCache.time),
+      globalIndex: withUpdatedAt(marketCache.data.globalIndex, marketCache.time),
+      safeHaven: withUpdatedAt(marketCache.data.safeHaven, marketCache.time),
+      taiwanFlow: withUpdatedAt(flowCache.data, flowCache.time),
     },
   };
 }
