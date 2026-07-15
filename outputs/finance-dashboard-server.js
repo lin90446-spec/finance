@@ -2,6 +2,7 @@ const http = require("node:http");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const vm = require("node:vm");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 
@@ -25,29 +26,36 @@ function loadOptionalModule(name) {
 
 const yahooGroups = {
   taiwanIndex: [],
-  globalIndex: [
-    ["^N225", "日經 225"],
-    ["^KS11", "KOSPI"],
-    ["^GSPC", "S&P 500", "", "sp500"],
-    ["ES=F", "S&P 500 期貨", "", "sp500"],
-    ["^IXIC", "Nasdaq", "", "nasdaq"],
-    ["NQ=F", "Nasdaq 100 期貨", "", "nasdaq"],
-    ["^DJI", "Dow Jones", "", "dow"],
-    ["YM=F", "道瓊期貨", "", "dow"],
-    ["^SOX", "費城半導體"],
-  ],
+  globalIndex: [],
   safeHaven: [
-    ["DX-Y.NYB", "美元指數"],
+    ["^VIX", "VIX"],
     ["GC=F", "黃金"],
     ["BZ=F", "布蘭特原油"],
-    ["^VIX", "VIX"],
+    ["DX-Y.NYB", "美元指數"],
   ],
 };
 
+const cmoneyUsFinanceItems = [
+  { path: "spx", name: "🇺🇸 S&P 500", ticker: "SPX", pairKey: "sp500" },
+  { path: "es", name: "🇺🇸 S&P 500 期貨", ticker: "ES", pairKey: "sp500" },
+  { path: "ixic", name: "🇺🇸 Nasdaq", ticker: "IXIC", pairKey: "nasdaq" },
+  { path: "nq", name: "🇺🇸 Nasdaq 100 期貨", ticker: "NQ", pairKey: "nasdaq" },
+  { path: "dji", name: "🇺🇸 Dow Jones", ticker: "DJI", pairKey: "dow" },
+  { path: "ym", name: "🇺🇸 道瓊期貨", ticker: "YM", pairKey: "dow" },
+  { path: "sox", name: "🇺🇸 費城半導體", ticker: "SOX", pairKey: "semiconductor" },
+];
+
+const tradingViewGlobalIndexItems = [
+  { symbol: "TVC:NI225", name: "🇯🇵 日經 225", ticker: "NI225", pairKey: "japan", market: "japan" },
+  { symbol: "TSE:TOPIX", name: "🇯🇵 東證指數", ticker: "TOPIX", pairKey: "japan", market: "japan" },
+  { symbol: "TVC:KOSPI", name: "🇰🇷 KOSPI", ticker: "KOSPI", pairKey: "korea", market: "korea" },
+  { symbol: "KRX:KOSDAQ", name: "🇰🇷 KOSDAQ", ticker: "KOSDAQ", pairKey: "korea", market: "korea" },
+];
+
 const configuredPlaceholders = {
   taiwanIndex: [
-    { name: "加權指數", ticker: "TAIEX", value: null, changePct: null, state: "讀取失敗", source: "HiStock 台股大盤" },
-    { name: "櫃買指數", ticker: "TWOI", value: null, changePct: null, state: "讀取失敗", source: "HiStock 櫃檯指數" },
+    { name: "加權指數", ticker: "TWA00", value: null, changePct: null, state: "讀取失敗", source: "CMoney" },
+    { name: "櫃買指數", ticker: "TWC00", value: null, changePct: null, state: "讀取失敗", source: "CMoney" },
     { name: "台指期夜盤", ticker: "TXF1", value: null, changePct: null, state: "讀取失敗", source: "CMoney" },
     { name: "富台指", ticker: "TWN", value: null, changePct: null, state: "讀取失敗", source: "HiStock 富台期" },
   ],
@@ -91,6 +99,18 @@ function isTaiwanEquityOpen(now = new Date()) {
   const parts = zonedParts("Asia/Taipei", now);
   const minutes = zonedMinutes("Asia/Taipei", now);
   return isWeekday(parts) && minutes >= 9 * 60 && minutes <= 13 * 60 + 30;
+}
+
+function isJapanEquityOpen(now = new Date()) {
+  const parts = zonedParts("Asia/Tokyo", now);
+  const minutes = zonedMinutes("Asia/Tokyo", now);
+  return isWeekday(parts) && minutes >= 9 * 60 && minutes <= 15 * 60 + 30;
+}
+
+function isKoreaEquityOpen(now = new Date()) {
+  const parts = zonedParts("Asia/Seoul", now);
+  const minutes = zonedMinutes("Asia/Seoul", now);
+  return isWeekday(parts) && minutes >= 9 * 60 && minutes <= 15 * 60 + 30;
 }
 
 function isTaiwanFutureOpen(now = new Date()) {
@@ -167,6 +187,7 @@ async function fetchYahooQuote(symbol, name, unit = "", pairKey = "") {
     marketClosed: isClosed,
     source: "Yahoo Finance",
     pairKey,
+    series: yahooSeriesFromResult(result),
   };
 }
 
@@ -209,14 +230,60 @@ function contractCompareText(current, previous) {
 
 function contractCompareTone(current, previous) {
   const diff = current - previous;
-  if (diff > 0) return "up";
-  if (diff < 0) return "down";
+  if (diff > 0) return "down";
+  if (diff < 0) return "up";
   return "flat";
 }
 
 function quoteText(change, changePct) {
-  const sign = change > 0 ? "+" : "";
-  return `${sign}${change.toFixed(2)} / ${sign}${changePct.toFixed(2)}%`;
+  const changeSign = change > 0 ? "+" : "";
+  const changePctSign = changePct > 0 ? "+" : "";
+  return `${changeSign}${change.toFixed(2)} / ${changePctSign}${changePct.toFixed(2)}%`;
+}
+
+function compactSeries(values, maxPoints = 72) {
+  const numericValues = values
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (numericValues.length < 2) return undefined;
+  if (numericValues.length <= maxPoints) return numericValues;
+  const step = (numericValues.length - 1) / (maxPoints - 1);
+  return Array.from({ length: maxPoints }, (_, index) => numericValues[Math.round(index * step)]);
+}
+
+function chartSeriesFromRows(rows, valueIndex = 1) {
+  if (!Array.isArray(rows)) return undefined;
+  return compactSeries(rows.map((row) => (Array.isArray(row) ? row[valueIndex] : row?.value ?? row?.close)));
+}
+
+function yahooSeriesFromResult(result) {
+  const closes = result?.indicators?.quote?.[0]?.close;
+  return compactSeries(Array.isArray(closes) ? closes : []);
+}
+
+async function fetchYahooSeries(symbol) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1m`;
+  const response = await fetch(url, {
+    headers: { "user-agent": "Mozilla/5.0 market-dashboard" },
+  });
+  if (!response.ok) throw new Error(`Yahoo series ${symbol} ${response.status}`);
+  const result = (await response.json()).chart?.result?.[0];
+  const series = yahooSeriesFromResult(result);
+  if (!series) throw new Error(`Yahoo series ${symbol} missing`);
+  return series;
+}
+
+async function attachSupplementalSeries(items, symbolMap) {
+  const targets = items
+    .map((item, index) => ({ item, index, symbol: symbolMap[item.ticker] || symbolMap[item.name] }))
+    .filter(({ item, symbol }) => symbol && !item.series);
+  const results = await Promise.allSettled(targets.map(({ symbol }) => fetchYahooSeries(symbol)));
+  results.forEach((result, index) => {
+    if (result.status === "fulfilled") {
+      items[targets[index].index] = { ...targets[index].item, series: result.value };
+    }
+  });
+  return items;
 }
 
 function signedText(value, unit = "") {
@@ -228,6 +295,39 @@ function withUpdatedAt(items, timestamp) {
   return items.map((item) => (
     item.marketClosed ? { ...item, updatedAt: undefined } : { ...item, updatedAt: item.updatedAt || updatedAt }
   ));
+}
+
+function cmoneyGraphFromHtml(html) {
+  const scripts = [...html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  return scripts.flatMap((match) => {
+    try {
+      const parsed = JSON.parse(match[1]);
+      const entries = Array.isArray(parsed) ? parsed : [parsed];
+      return entries.flatMap((item) => {
+        const graph = item["@graph"] || [item];
+        return graph.flatMap((entry) => [entry, entry.about].filter(Boolean));
+      });
+    } catch {
+      return [];
+    }
+  });
+}
+
+function cmoneyNuxtDataFromHtml(html) {
+  const match = html.match(/<script>window\.__NUXT__=([\s\S]*?)<\/script>/);
+  if (!match) throw new Error("CMoney Nuxt data missing");
+  const sandbox = { window: {} };
+  vm.runInNewContext(`window.__NUXT__=${match[1]}`, sandbox, { timeout: 5000 });
+  return sandbox.window.__NUXT__?.data?.[0];
+}
+
+function cmoneySeriesFromHtml(html) {
+  try {
+    const data = cmoneyNuxtDataFromHtml(html);
+    return chartSeriesFromRows(data?.trendchartData?.data);
+  } catch {
+    return undefined;
+  }
 }
 
 function htmlToLines(html) {
@@ -287,6 +387,8 @@ async function fetchTwseInstitutionalFlows() {
       changePct: null,
       changeText: flowText(foreignNetYi),
       tone: flowTone(foreignNetYi),
+      valueTone: flowTone(foreignNetYi),
+      hideChange: true,
       state: date,
       source: "TWSE BFI82U",
       refreshRule: "14:45 日更",
@@ -300,6 +402,8 @@ async function fetchTwseInstitutionalFlows() {
       changePct: null,
       changeText: flowText(investmentTrustNetYi),
       tone: flowTone(investmentTrustNetYi),
+      valueTone: flowTone(investmentTrustNetYi),
+      hideChange: true,
       state: date,
       source: "TWSE BFI82U",
       refreshRule: "14:45 日更",
@@ -313,6 +417,8 @@ async function fetchTwseInstitutionalFlows() {
       changePct: null,
       changeText: flowText(dealerNetYi),
       tone: flowTone(dealerNetYi),
+      valueTone: flowTone(dealerNetYi),
+      hideChange: true,
       state: date,
       source: "TWSE BFI82U",
       refreshRule: "14:45 日更",
@@ -328,21 +434,16 @@ async function fetchCmoneyNightFuture() {
   });
   if (!response.ok) throw new Error(`CMoney TXF1 ${response.status}`);
   const html = await response.text();
-  const scripts = [...html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
-  const graph = scripts.flatMap((match) => {
-    try {
-      const parsed = JSON.parse(match[1]);
-      return Array.isArray(parsed) ? parsed.flatMap((item) => item["@graph"] || []) : parsed["@graph"] || [];
-    } catch {
-      return [];
-    }
-  });
+  const graph = cmoneyGraphFromHtml(html);
   const entity = graph.find((item) => item.tickerSymbol === "TXF1");
   if (!entity?.additionalProperty) throw new Error("CMoney TXF1 data missing");
   const props = Object.fromEntries(entity.additionalProperty.map((item) => [item.name, item.value]));
   const value = Number(props["成交"]);
   const change = Number(props["漲跌"]);
-  const changePct = Number(props["漲跌幅"]);
+  let changePct = Number(props["漲跌幅"]);
+  if (Number.isFinite(change) && Number.isFinite(changePct) && change < 0 && changePct > 0) {
+    changePct *= -1;
+  }
   if (!Number.isFinite(value)) throw new Error("CMoney TXF1 price missing");
   const closeInfo = closedState(isTaiwanFutureOpen());
   return {
@@ -355,6 +456,166 @@ async function fetchCmoneyNightFuture() {
     state: closeInfo?.state || "夜盤",
     marketClosed: closeInfo?.marketClosed,
     source: "CMoney",
+    series: cmoneySeriesFromHtml(html),
+  };
+}
+
+async function fetchCmoneyIndexQuote({ url, ticker, name }) {
+  const response = await fetch(url, {
+    headers: { "user-agent": "Mozilla/5.0 market-dashboard" },
+  });
+  if (!response.ok) throw new Error(`CMoney ${ticker} ${response.status}`);
+  const html = await response.text();
+  const graph = cmoneyGraphFromHtml(html);
+  const entity = graph.find((item) => item.tickerSymbol === ticker);
+  if (!entity?.additionalProperty) throw new Error(`CMoney ${ticker} data missing`);
+  const props = Object.fromEntries(entity.additionalProperty.map((item) => [item.name, item.value]));
+  const value = Number(props["成交"]);
+  const change = Number(props["漲跌"]);
+  let changePct = Number(props["漲跌幅"]);
+  if (Number.isFinite(change) && Number.isFinite(changePct) && change < 0 && changePct > 0) {
+    changePct *= -1;
+  }
+  if (!Number.isFinite(value) || !Number.isFinite(change) || !Number.isFinite(changePct)) {
+    throw new Error(`CMoney ${ticker} quote missing`);
+  }
+  const closeInfo = closedState(isTaiwanEquityOpen());
+  return {
+    name,
+    ticker,
+    value,
+    changePct,
+    changeText: quoteText(change, changePct),
+    tone: change > 0 ? "up" : change < 0 ? "down" : "flat",
+    state: closeInfo?.state || "更新",
+    marketClosed: closeInfo?.marketClosed,
+    source: "CMoney",
+    series: cmoneySeriesFromHtml(html),
+  };
+}
+
+async function fetchCmoneyUsFinanceQuote({ path: cmoneyPath, name, ticker, pairKey }) {
+  const response = await fetch(`https://www.cmoney.tw/usfinance/${cmoneyPath}`, {
+    headers: { "user-agent": "Mozilla/5.0 market-dashboard" },
+  });
+  if (!response.ok) throw new Error(`CMoney US ${cmoneyPath} ${response.status}`);
+  const data = cmoneyNuxtDataFromHtml(await response.text());
+  const rows = data?.trendchartData?.data;
+  const last = Array.isArray(rows) ? rows[rows.length - 1] : null;
+  const value = Number(last?.[1]);
+  const previous = Number(data?.trendchartData?.benchmark ?? data?.immediate?.yesterday);
+  if (!Number.isFinite(value) || !Number.isFinite(previous)) {
+    throw new Error(`CMoney US ${cmoneyPath} quote missing`);
+  }
+  const change = value - previous;
+  const changePct = previous ? (change / previous) * 100 : null;
+  const lastTime = Number(last?.[0]);
+  const isFresh = Number.isFinite(lastTime) && Date.now() - lastTime < 20 * 60 * 1000;
+  const isOpen = data?.mainAddInfo?.isOpen === true || isFresh;
+  return {
+    name,
+    ticker,
+    value,
+    changePct,
+    changeText: Number.isFinite(changePct) ? quoteText(change, changePct) : "等待資料",
+    tone: change > 0 ? "up" : change < 0 ? "down" : "flat",
+    state: isOpen ? "更新" : "休市",
+    marketClosed: !isOpen,
+    source: "CMoney",
+    pairKey,
+    series: chartSeriesFromRows(rows),
+  };
+}
+
+async function fetchTradingViewGlobalIndexes() {
+  const columns = ["close", "change", "change_abs"];
+  const response = await fetch("https://scanner.tradingview.com/global/scan", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 market-dashboard",
+    },
+    body: JSON.stringify({
+      symbols: {
+        tickers: tradingViewGlobalIndexItems.map((item) => item.symbol),
+        query: { types: [] },
+      },
+      columns,
+    }),
+  });
+  if (!response.ok) throw new Error(`TradingView global ${response.status}`);
+  const payload = await response.json();
+  const rows = new Map((payload.data || []).map((item) => [item.s, item.d]));
+  return tradingViewGlobalIndexItems.map((item) => {
+    const [value, changePct, change] = (rows.get(item.symbol) || []).map(Number);
+    if (!Number.isFinite(value) || !Number.isFinite(change) || !Number.isFinite(changePct)) {
+      throw new Error(`TradingView ${item.symbol} missing`);
+    }
+    const isOpen = item.market === "japan" ? isJapanEquityOpen() : isKoreaEquityOpen();
+    return {
+      name: item.name,
+      ticker: item.ticker,
+      value,
+      changePct,
+      changeText: quoteText(change, changePct),
+      tone: change > 0 ? "up" : change < 0 ? "down" : "flat",
+      state: isOpen ? "更新" : "休市",
+      marketClosed: !isOpen,
+      source: "TradingView",
+      pairKey: item.pairKey,
+    };
+  });
+}
+
+async function fetchTradingViewSoxxExtendedQuote() {
+  const columns = [
+    "close",
+    "change",
+    "change_abs",
+    "premarket_close",
+    "premarket_change",
+    "premarket_change_abs",
+    "postmarket_close",
+    "postmarket_change",
+    "postmarket_change_abs",
+  ];
+  const response = await fetch("https://scanner.tradingview.com/america/scan", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 market-dashboard",
+    },
+    body: JSON.stringify({
+      symbols: {
+        tickers: ["NASDAQ:SOXX"],
+        query: { types: [] },
+      },
+      columns,
+    }),
+  });
+  if (!response.ok) throw new Error(`TradingView SOXX ${response.status}`);
+  const row = (await response.json()).data?.[0]?.d?.map((value) => (value === null || value === undefined ? null : Number(value)));
+  if (!Array.isArray(row)) throw new Error("TradingView SOXX missing");
+  const [close, changePct, change, preClose, preChangePct, preChange, postClose, postChangePct, postChange] = row;
+  const hasPost = Number.isFinite(postClose);
+  const hasPre = Number.isFinite(preClose);
+  const value = hasPost ? postClose : hasPre ? preClose : close;
+  const extendedChange = hasPost ? postChange : hasPre ? preChange : change;
+  const extendedChangePct = hasPost ? postChangePct : hasPre ? preChangePct : changePct;
+  const session = hasPost ? "盤後" : hasPre ? "盤前" : "更新";
+  if (!Number.isFinite(value) || !Number.isFinite(extendedChange) || !Number.isFinite(extendedChangePct)) {
+    throw new Error("TradingView SOXX extended quote missing");
+  }
+  return {
+    name: "🇺🇸 SOXX",
+    ticker: "SOXX",
+    value,
+    changePct: extendedChangePct,
+    changeText: quoteText(extendedChange, extendedChangePct),
+    tone: extendedChange > 0 ? "up" : extendedChange < 0 ? "down" : "flat",
+    state: session,
+    source: "TradingView",
+    pairKey: "semiconductor",
   };
 }
 
@@ -370,7 +631,8 @@ async function fetchHistockQuote({ code, name, sourceName, marketType = "taiwanE
   const timeLine = lines.find((line) => line.startsWith("本地時間:"));
   const value = Number(String(lines[valueIndex + 1]).replace(/,/g, ""));
   const change = parseSignedNumber(lines[changeIndex + 1]);
-  const changePct = parseSignedNumber(lines[changePctIndex + 1]);
+  let changePct = parseSignedNumber(lines[changePctIndex + 1]);
+  if (change < 0 && changePct > 0) changePct *= -1;
   if (!Number.isFinite(value) || change === null || changePct === null) {
     throw new Error(`HiStock ${code} quote missing`);
   }
@@ -400,7 +662,8 @@ async function fetchHistockTaiex() {
   const timeLine = lines.find((line) => line.startsWith("本地時間:"));
   const value = Number(String(lines[marketIndex + 4]).replace(/,/g, ""));
   const change = parseSignedNumber(lines[changeIndex + 1]);
-  const changePct = parseSignedNumber(lines[changePctIndex + 1]);
+  let changePct = parseSignedNumber(lines[changePctIndex + 1]);
+  if (change < 0 && changePct > 0) changePct *= -1;
   if (!Number.isFinite(value) || change === null || changePct === null) {
     throw new Error("HiStock TAIEX quote missing");
   }
@@ -476,6 +739,7 @@ async function fetchTwseMarketTurnover() {
     changePct: null,
     changeText: "成交金額",
     tone: "flat",
+    hideChange: true,
     state: parseDateState(payload.date),
     source: "TWSE MI_INDEX 證券合計",
     refreshRule: "14:45 日更",
@@ -662,6 +926,8 @@ async function fetchWantgooPublicBankNetBuy() {
     changePct: null,
     changeText: flowText(Math.round(totalYi * 100) / 100),
     tone: flowTone(totalYi),
+    valueTone: flowTone(totalYi),
+    hideChange: true,
     state: new Date(current.date).toLocaleDateString("zh-TW", { timeZone: "Asia/Taipei", month: "2-digit", day: "2-digit" }),
     source: "WantGoo 合計(萬)",
     refreshRule: "14:45 日更",
@@ -786,7 +1052,6 @@ async function fetchTradingViewYield(symbol, name) {
     state: closeInfo?.state || "即時",
     marketClosed: closeInfo?.marketClosed,
     source: "TradingView",
-    pairKey: "us-yield",
   };
 }
 
@@ -807,7 +1072,6 @@ async function fetchSafeHavenYields() {
           changePct: null,
           state: "讀取失敗",
           source: "TradingView",
-          pairKey: "us-yield",
         }
   ));
 }
@@ -828,17 +1092,81 @@ async function buildFastMarketData() {
     }));
   }));
 
+  try {
+    groups.globalIndex.push(...await fetchTradingViewGlobalIndexes());
+  } catch {
+    groups.globalIndex.push(...tradingViewGlobalIndexItems.map((item) => ({
+      name: item.name,
+      ticker: item.ticker,
+      value: null,
+      changePct: null,
+      state: "讀取失敗",
+      source: "TradingView",
+      pairKey: item.pairKey,
+    })));
+  }
+
+  const cmoneyUsQuotes = await Promise.allSettled(cmoneyUsFinanceItems.map(fetchCmoneyUsFinanceQuote));
+  groups.globalIndex.push(...cmoneyUsQuotes.map((quote, index) => (
+    quote.status === "fulfilled"
+      ? quote.value
+      : {
+          name: cmoneyUsFinanceItems[index].name,
+          ticker: cmoneyUsFinanceItems[index].ticker,
+          value: null,
+          changePct: null,
+          state: "讀取失敗",
+          source: "CMoney",
+          pairKey: cmoneyUsFinanceItems[index].pairKey,
+        }
+  )));
+
+  try {
+    groups.globalIndex.push(await fetchTradingViewSoxxExtendedQuote());
+  } catch {
+    groups.globalIndex.push({
+      name: "🇺🇸 SOXX",
+      ticker: "SOXX",
+      value: null,
+      changePct: null,
+      state: "讀取失敗",
+      source: "TradingView",
+      pairKey: "semiconductor",
+    });
+  }
+
   groups.safeHaven.splice(1, 0, ...(await fetchSafeHavenYields()));
 
   const taiwanIndexExtras = await Promise.allSettled([
-    fetchHistockTaiex(),
-    fetchHistockQuote({ code: "TWOI", name: "櫃買指數", sourceName: "櫃檯指數" }),
+    fetchCmoneyIndexQuote({ url: "https://www.cmoney.tw/forum/market", ticker: "TWA00", name: "加權指數" }),
+    fetchCmoneyIndexQuote({ url: "https://www.cmoney.tw/forum/stock/TWC00", ticker: "TWC00", name: "櫃買指數" }),
     fetchCmoneyNightFuture(),
     fetchHistockQuote({ code: "TWN", name: "富台指", sourceName: "富台期", marketType: "sgxTaiwanFuture" }),
   ]);
   groups.taiwanIndex.push(...taiwanIndexExtras.map((result, index) => (
     result.status === "fulfilled" ? result.value : configuredPlaceholders.taiwanIndex[index]
   )));
+  await Promise.all([
+    attachSupplementalSeries(groups.taiwanIndex, {
+      TWA00: "^TWII",
+      TAIEX: "^TWII",
+      TWC00: "^TWOII",
+    }),
+    attachSupplementalSeries(groups.globalIndex, {
+      NI225: "^N225",
+      TOPIX: "^TOPX",
+      KOSPI: "^KS11",
+      KOSDAQ: "^KQ11",
+      SPX: "^GSPC",
+      ES: "ES=F",
+      IXIC: "^IXIC",
+      NQ: "NQ=F",
+      DJI: "^DJI",
+      YM: "YM=F",
+      SOX: "^SOX",
+      SOXX: "SOXX",
+    }),
+  ]);
   return groups;
 }
 
@@ -855,9 +1183,9 @@ async function buildFlowData() {
     fullRow: true,
   }));
   const institutionalFlows = await fetchTwseInstitutionalFlows().catch(() => [
-    { name: "外資買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "14:45 日更", pairKey: "flow-institutional" },
-    { name: "投信買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "14:45 日更", pairKey: "flow-institutional" },
-    { name: "自營商買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "14:45 日更", pairKey: "flow-dealer-public" },
+    { name: "外資買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "14:45 日更", pairKey: "flow-institutional", hideChange: true },
+    { name: "投信買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "14:45 日更", pairKey: "flow-institutional", hideChange: true },
+    { name: "自營商買賣超", ticker: "上市", value: null, changePct: null, state: "讀取失敗", source: "TWSE BFI82U", refreshRule: "14:45 日更", pairKey: "flow-dealer-public", hideChange: true },
   ]);
   const publicBank = await fetchWantgooPublicBankNetBuy().catch(() => ({
     name: "八大官股買賣超",
@@ -867,6 +1195,7 @@ async function buildFlowData() {
     changePct: null,
     changeText: "來源阻擋",
     tone: "flat",
+    hideChange: true,
     state: "讀取失敗",
     source: "WantGoo 合計(萬)",
     refreshRule: "14:45 日更",

@@ -84,6 +84,9 @@
           <span class="market-state"></span>
         </div>
         <div class="metric-value">--</div>
+        <svg class="sparkline" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true">
+          <path></path>
+        </svg>
         <div class="metric-foot">
           <span class="change">--</span>
           <span class="source">--</span>
@@ -126,23 +129,26 @@
             { name: "散戶多空比", ticker: "微台指", value: "待接永豐 PDF", changePct: null, state: "14:45 日更", fullRow: true },
           ],
           globalIndex: [
-            { name: "日經 225", ticker: "^N225", value: "待連線", changePct: null, state: "資料源" },
-            { name: "KOSPI", ticker: "^KS11", value: "待連線", changePct: null, state: "資料源" },
-            { name: "S&P 500", ticker: "^GSPC", value: "待連線", changePct: null, state: "資料源", pairKey: "sp500" },
-            { name: "S&P 500 期貨", ticker: "ES=F", value: "待連線", changePct: null, state: "資料源", pairKey: "sp500" },
-            { name: "Nasdaq", ticker: "^IXIC", value: "待連線", changePct: null, state: "資料源", pairKey: "nasdaq" },
-            { name: "Nasdaq 100 期貨", ticker: "NQ=F", value: "待連線", changePct: null, state: "資料源", pairKey: "nasdaq" },
-            { name: "Dow Jones", ticker: "^DJI", value: "待連線", changePct: null, state: "資料源", pairKey: "dow" },
-            { name: "道瓊期貨", ticker: "YM=F", value: "待連線", changePct: null, state: "資料源", pairKey: "dow" },
-            { name: "費城半導體", ticker: "^SOX", value: "待連線", changePct: null, state: "資料源" },
+            { name: "🇯🇵 日經 225", ticker: "NI225", value: "待連線", changePct: null, state: "資料源", pairKey: "japan" },
+            { name: "🇯🇵 東證指數", ticker: "TOPIX", value: "待連線", changePct: null, state: "資料源", pairKey: "japan" },
+            { name: "🇰🇷 KOSPI", ticker: "KOSPI", value: "待連線", changePct: null, state: "資料源", pairKey: "korea" },
+            { name: "🇰🇷 KOSDAQ", ticker: "KOSDAQ", value: "待連線", changePct: null, state: "資料源", pairKey: "korea" },
+            { name: "🇺🇸 S&P 500", ticker: "SPX", value: "待連線", changePct: null, state: "資料源", pairKey: "sp500" },
+            { name: "🇺🇸 S&P 500 期貨", ticker: "ES", value: "待連線", changePct: null, state: "資料源", pairKey: "sp500" },
+            { name: "🇺🇸 Nasdaq", ticker: "IXIC", value: "待連線", changePct: null, state: "資料源", pairKey: "nasdaq" },
+            { name: "🇺🇸 Nasdaq 100 期貨", ticker: "NQ", value: "待連線", changePct: null, state: "資料源", pairKey: "nasdaq" },
+            { name: "🇺🇸 Dow Jones", ticker: "DJI", value: "待連線", changePct: null, state: "資料源", pairKey: "dow" },
+            { name: "🇺🇸 道瓊期貨", ticker: "YM", value: "待連線", changePct: null, state: "資料源", pairKey: "dow" },
+            { name: "🇺🇸 費城半導體", ticker: "SOX", value: "待連線", changePct: null, state: "資料源", pairKey: "semiconductor" },
+            { name: "🇺🇸 SOXX", ticker: "SOXX", value: "待連線", changePct: null, state: "資料源", pairKey: "semiconductor" },
           ],
           safeHaven: [
-            { name: "美元指數", ticker: "DX-Y.NYB", value: "待連線", changePct: null, state: "資料源" },
-            { name: "美國 2Y 殖利率", ticker: "US02Y", value: "待連線", changePct: null, state: "資料源", decimals: 3, pairKey: "us-yield" },
-            { name: "美國 10Y 殖利率", ticker: "US10Y", value: "待連線", changePct: null, state: "資料源", decimals: 3, pairKey: "us-yield" },
+            { name: "VIX", ticker: "^VIX", value: "待連線", changePct: null, state: "資料源" },
+            { name: "美國 2Y 殖利率", ticker: "US02Y", value: "待連線", changePct: null, state: "資料源", decimals: 3 },
+            { name: "美國 10Y 殖利率", ticker: "US10Y", value: "待連線", changePct: null, state: "資料源", decimals: 3 },
             { name: "黃金", ticker: "GC=F", value: "待連線", changePct: null, state: "資料源" },
             { name: "布蘭特原油", ticker: "BZ=F", value: "待連線", changePct: null, state: "資料源" },
-            { name: "VIX", ticker: "^VIX", value: "待連線", changePct: null, state: "資料源" },
+            { name: "美元指數", ticker: "DX-Y.NYB", value: "待連線", changePct: null, state: "資料源" },
           ],
         },
       };
@@ -185,19 +191,48 @@
         return formatUpdatedAt(item.updatedAt) || item.state || "更新";
       }
 
+      function sparklinePath(values) {
+        if (!Array.isArray(values) || values.length < 2) return "";
+        const series = values.map(Number).filter((value) => Number.isFinite(value));
+        if (series.length < 2) return "";
+        const min = Math.min(...series);
+        const max = Math.max(...series);
+        const range = max - min || Math.max(Math.abs(max), 1) * 0.01;
+        return series.map((value, index) => {
+          const x = (index / (series.length - 1)) * 100;
+          const y = 28 - ((value - min) / range) * 24;
+          return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+        }).join(" ");
+      }
+
       function renderCard(item) {
         const node = document.querySelector("#metricCardTemplate").content.firstElementChild.cloneNode(true);
         const changeClass = item.tone || (item.changePct > 0 ? "up" : item.changePct < 0 ? "down" : "flat");
         const stateClass = item.refreshRule || item.marketClosed ? "closed" : "updated";
+        const sparkline = node.querySelector(".sparkline");
+        const sparkPath = sparklinePath(item.series);
+        const metricValue = node.querySelector(".metric-value");
+        const changeNode = node.querySelector(".change");
         if (item.fullRow) node.classList.add("full-row");
         node.querySelector("h3").textContent = item.name;
         node.querySelector("p").textContent = item.ticker || "";
         node.querySelector(".market-state").textContent = formatState(item);
         node.querySelector(".market-state").classList.add(stateClass);
-        node.querySelector(".metric-value").textContent = formatNumber(item.value, item.unit || "", item.decimals ?? 2);
-        node.querySelector(".change").textContent = formatChange(item);
-        node.querySelector(".change").classList.add(changeClass);
+        metricValue.textContent = formatNumber(item.value, item.unit || "", item.decimals ?? 2);
+        if (item.valueTone) metricValue.classList.add(item.valueTone);
+        if (item.hideChange) {
+          changeNode.remove();
+        } else {
+          changeNode.textContent = formatChange(item);
+          changeNode.classList.add(changeClass);
+        }
         node.querySelector(".source").textContent = formatSource(item);
+        if (sparkPath) {
+          sparkline.querySelector("path").setAttribute("d", sparkPath);
+          sparkline.classList.add(changeClass);
+        } else {
+          sparkline.remove();
+        }
         return node;
       }
 

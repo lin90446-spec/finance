@@ -232,6 +232,41 @@ h1 {
   overflow-wrap: anywhere;
 }
 
+.metric-value.up {
+  color: var(--red);
+}
+
+.metric-value.down {
+  color: var(--green);
+}
+
+.sparkline {
+  width: 100%;
+  height: 34px;
+  margin: -2px 0 10px;
+  overflow: visible;
+}
+
+.sparkline path {
+  fill: none;
+  stroke: var(--amber);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+}
+
+.sparkline.up path {
+  stroke: var(--red);
+}
+
+.sparkline.down path {
+  stroke: var(--green);
+}
+
+.sparkline.flat path {
+  stroke: var(--amber);
+}
+
 .change {
   border-radius: 999px;
   padding: 5px 8px;
@@ -240,13 +275,13 @@ h1 {
 }
 
 .change.up {
-  background: rgba(22, 122, 85, 0.12);
-  color: var(--green);
+  background: rgba(183, 58, 72, 0.12);
+  color: var(--red);
 }
 
 .change.down {
-  background: rgba(183, 58, 72, 0.12);
-  color: var(--red);
+  background: rgba(22, 122, 85, 0.12);
+  color: var(--green);
 }
 
 .change.flat {
@@ -269,6 +304,10 @@ h1 {
     grid-template-columns: 1fr;
   }
 
+  #safeHavenGrid.card-grid.large {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .metric-pair {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -284,6 +323,66 @@ h1 {
   .summary-strip,
   .card-grid {
     grid-template-columns: 1fr;
+  }
+
+  #safeHavenGrid.card-grid.large {
+    gap: 8px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  #safeHavenGrid .metric-card {
+    min-height: 164px;
+    padding: 10px;
+  }
+
+  #safeHavenGrid .metric-head {
+    align-items: start;
+    gap: 6px;
+  }
+
+  #safeHavenGrid .metric-head h3 {
+    font-size: 0.78rem;
+    line-height: 1.18;
+  }
+
+  #safeHavenGrid .metric-head p,
+  #safeHavenGrid .source {
+    font-size: 0.62rem;
+    overflow-wrap: anywhere;
+  }
+
+  #safeHavenGrid .market-state {
+    padding: 3px 6px;
+    font-size: 0.58rem;
+    line-height: 1.15;
+    max-width: 48px;
+    text-align: center;
+    white-space: normal;
+  }
+
+  #safeHavenGrid .metric-value {
+    padding: 10px 0 7px;
+    font-size: 1rem;
+  }
+
+  #safeHavenGrid .sparkline {
+    height: 26px;
+    margin-bottom: 7px;
+  }
+
+  #safeHavenGrid .metric-foot {
+    align-items: start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  #safeHavenGrid .change {
+    padding: 4px 6px;
+    font-size: 0.68rem;
+    line-height: 1.2;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   .metric-pair {
