@@ -65,14 +65,15 @@ h1 {
 
 .status-panel {
   display: grid;
-  grid-template-columns: repeat(2, minmax(108px, 1fr)) 44px;
+  grid-template-columns: repeat(2, minmax(108px, 1fr)) minmax(104px, auto) 44px;
   gap: 10px;
   align-items: stretch;
-  min-width: min(100%, 360px);
+  min-width: min(100%, 480px);
 }
 
 .status-panel > div,
 .status-panel button,
+.asset-link,
 .summary-strip article,
 .market-section,
 .metric-card {
@@ -112,6 +113,24 @@ h1 {
 }
 
 .status-panel button:hover {
+  background: var(--panel-soft);
+  transform: translateY(-1px);
+}
+
+.asset-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--blue);
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-align: center;
+  text-decoration: none;
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.asset-link:hover {
   background: var(--panel-soft);
   transform: translateY(-1px);
 }
