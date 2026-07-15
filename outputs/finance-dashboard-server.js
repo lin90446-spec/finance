@@ -152,6 +152,16 @@ function isUsYieldOpen(now = new Date()) {
   return isWeekday(parts) && minutes >= 8 * 60 && minutes <= 17 * 60;
 }
 
+function usEquitySession(now = new Date()) {
+  const parts = zonedParts("America/New_York", now);
+  const minutes = zonedMinutes("America/New_York", now);
+  if (!isWeekday(parts)) return "closed";
+  if (minutes >= 4 * 60 && minutes < 9 * 60 + 30) return "premarket";
+  if (minutes >= 9 * 60 + 30 && minutes < 16 * 60) return "regular";
+  if (minutes >= 16 * 60 && minutes < 20 * 60) return "postmarket";
+  return "closed";
+}
+
 function closedState(isOpen) {
   return isOpen ? null : { state: "休市", marketClosed: true };
 }
@@ -597,12 +607,18 @@ async function fetchTradingViewSoxxExtendedQuote() {
   const row = (await response.json()).data?.[0]?.d?.map((value) => (value === null || value === undefined ? null : Number(value)));
   if (!Array.isArray(row)) throw new Error("TradingView SOXX missing");
   const [close, changePct, change, preClose, preChangePct, preChange, postClose, postChangePct, postChange] = row;
-  const hasPost = Number.isFinite(postClose);
-  const hasPre = Number.isFinite(preClose);
-  const value = hasPost ? postClose : hasPre ? preClose : close;
-  const extendedChange = hasPost ? postChange : hasPre ? preChange : change;
-  const extendedChangePct = hasPost ? postChangePct : hasPre ? preChangePct : changePct;
-  const session = hasPost ? "盤後" : hasPre ? "盤前" : "更新";
+  const session = usEquitySession();
+  const quotes = {
+    premarket: { label: "盤前", value: preClose, change: preChange, changePct: preChangePct },
+    regular: { label: "盤中", value: close, change, changePct },
+    postmarket: { label: "盤後", value: postClose, change: postChange, changePct: postChangePct },
+    closed: { label: "休市", value: close, change, changePct },
+  };
+  const selected = quotes[session];
+  const fallback = quotes.regular;
+  const value = Number.isFinite(selected.value) ? selected.value : fallback.value;
+  const extendedChange = Number.isFinite(selected.change) ? selected.change : fallback.change;
+  const extendedChangePct = Number.isFinite(selected.changePct) ? selected.changePct : fallback.changePct;
   if (!Number.isFinite(value) || !Number.isFinite(extendedChange) || !Number.isFinite(extendedChangePct)) {
     throw new Error("TradingView SOXX extended quote missing");
   }
@@ -613,7 +629,9 @@ async function fetchTradingViewSoxxExtendedQuote() {
     changePct: extendedChangePct,
     changeText: quoteText(extendedChange, extendedChangePct),
     tone: extendedChange > 0 ? "up" : extendedChange < 0 ? "down" : "flat",
-    state: session,
+    state: selected.label,
+    statePrefix: selected.label,
+    marketClosed: session === "closed",
     source: "TradingView",
     pairKey: "semiconductor",
   };
@@ -1132,6 +1150,7 @@ async function buildFastMarketData() {
       state: "讀取失敗",
       source: "TradingView",
       pairKey: "semiconductor",
+      statePrefix: null,
     });
   }
 

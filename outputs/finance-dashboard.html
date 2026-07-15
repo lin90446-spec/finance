@@ -174,11 +174,11 @@
         if (!value) return "";
         const date = new Date(value);
         if (Number.isNaN(date.getTime())) return "";
-        return `更新 ${date.toLocaleTimeString("zh-TW", {
+        return date.toLocaleTimeString("zh-TW", {
           hour12: false,
           hour: "2-digit",
           minute: "2-digit",
-        })}`;
+        });
       }
 
       function formatSource(item) {
@@ -191,7 +191,9 @@
       function formatState(item) {
         if (item.refreshRule) return item.state || "更新";
         if (item.marketClosed) return "休市";
-        return formatUpdatedAt(item.updatedAt) || item.state || "更新";
+        const time = formatUpdatedAt(item.updatedAt);
+        if (item.statePrefix && time) return `${item.statePrefix} ${time}`;
+        return time ? `更新 ${time}` : item.state || "更新";
       }
 
       function sparklinePath(values) {
