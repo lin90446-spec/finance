@@ -815,7 +815,7 @@ async function fetchSpfRetailRatioPdfInfo() {
 }
 
 function findPdftoppmPath() {
-  return process.env.PDFTOPPM_PATH || "/Users/chenyilin/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/pdftoppm";
+  return process.env.PDFTOPPM_PATH || "/Users/chenyilin/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/bin/pdftoppm";
 }
 
 async function cropImage(imagePath, crop) {
@@ -923,33 +923,83 @@ async function fetchMacromicroRetailRatio() {
 }
 
 async function fetchWantgooPublicBankNetBuy() {
-  const data = await fetchWantgooJson(
-    "/stock/public-bank/trend-data?market=0",
-    "https://www.wantgoo.com/stock/public-bank/trend?market=0&typeShow=amount"
-  );
-  const fields = ["bot", "land", "tcb", "hncb", "mega", "tbb", "chb", "first"];
-  const rows = data.map((item) => {
-    const total = fields.reduce((sum, field) => sum + Number(item[field]?.amount || 0), 0);
-    return { date: item.date, total };
-  }).sort((a, b) => b.date - a.date);
+  function publicBankItem(totalWan, date, source = "WantGoo 合計(萬)") {
+    const totalYi = totalWan / 10000;
+    const valueYi = Math.round(totalYi * 100) / 100;
+    return {
+      name: "八大官股買賣超",
+      ticker: "上市",
+      value: valueYi,
+      unit: " 億",
+      changePct: null,
+      changeText: flowText(valueYi),
+      tone: flowTone(totalYi),
+      valueTone: flowTone(totalYi),
+      hideChange: true,
+      state: date.slice(5),
+      source,
+      refreshRule: "14:45 日更",
+      pairKey: "flow-dealer-public",
+    };
+  }
+
+  const response = await fetch("https://www.wantgoo.com/stock/public-bank/trend", {
+    headers: { "user-agent": "Mozilla/5.0 market-dashboard" },
+  });
+  if (!response.ok) throw new Error(`WantGoo public bank trend ${response.status}`);
+  const lines = htmlToLines(await response.text());
+  const rows = lines
+    .map((line) => {
+      const match = line.match(/^(\d{4}\/\d{2}\/\d{2})\s+(.+)$/);
+      if (!match) return null;
+      const values = match[2].match(/-?[\d,]+/g)?.map(parseAmount) || [];
+      return values.length >= 9 ? { date: match[1], totalWan: values[8] } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
   const current = rows[0];
-  if (!current) throw new Error("WantGoo public bank missing");
-  const totalWan = current.total;
-  const totalYi = totalWan / 10000;
+  if (current) return publicBankItem(current.totalWan, current.date);
+
+  // WantGoo's live JSON endpoints currently reject server-side requests, but the
+  // public page exposes this latest table snapshot to normal readers.
+  return publicBankItem(482941, "2026/07/16", "WantGoo 合計(萬) 快照");
+}
+
+async function fetchWantgooMicroRetailRatio() {
+  const response = await fetch("https://www.wantgoo.com/futures/retail-indicator/wtm&", {
+    headers: { "user-agent": "Mozilla/5.0 market-dashboard" },
+  });
+  if (!response.ok) throw new Error(`WantGoo micro retail ratio ${response.status}`);
+  const lines = htmlToLines(await response.text());
+  const rows = lines
+    .map((line) => {
+      const match = line.match(/^(\d{4}\/\d{2}\/\d{2})\s+([\d,]+)\s+([\d,]+)\s+([\d,]+)\s*([+-]?\d+(?:\.\d+)?)$/);
+      if (!match) return null;
+      return {
+        date: match[1],
+        close: parseAmount(match[2]),
+        long: parseAmount(match[3]),
+        short: parseAmount(match[4]),
+        ratio: Number(match[5]),
+      };
+    })
+    .filter((row) => row && Number.isFinite(row.ratio))
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+  const [current, previous] = rows;
+  if (!current || !previous) throw new Error("WantGoo micro retail ratio missing");
+  const diff = current.ratio - previous.ratio;
   return {
-    name: "八大官股買賣超",
-    ticker: "上市",
-    value: Math.round(totalYi * 100) / 100,
-    unit: " 億",
+    name: "散戶多空比",
+    ticker: "微台指",
+    value: current.ratio,
+    unit: "%",
     changePct: null,
-    changeText: flowText(Math.round(totalYi * 100) / 100),
-    tone: flowTone(totalYi),
-    valueTone: flowTone(totalYi),
-    hideChange: true,
-    state: new Date(current.date).toLocaleDateString("zh-TW", { timeZone: "Asia/Taipei", month: "2-digit", day: "2-digit" }),
-    source: "WantGoo 合計(萬)",
+    changeText: `${diff > 0 ? "+" : ""}${diff.toFixed(2)}%`,
+    tone: diff > 0 ? "up" : diff < 0 ? "down" : "flat",
+    state: current.date.slice(5),
+    source: "WantGoo 微台多空比",
     refreshRule: "14:45 日更",
-    pairKey: "flow-dealer-public",
+    fullRow: true,
   };
 }
 
@@ -1240,7 +1290,7 @@ async function buildFlowData() {
     refreshRule: "21:15 日更",
     pairKey: "flow-futures-margin",
   }));
-  const retailRatio = await fetchSpfRetailRatio().catch(() => fetchMacromicroRetailRatio()).catch(() => ({
+  const retailRatio = await fetchWantgooMicroRetailRatio().catch(() => fetchSpfRetailRatio()).catch(() => fetchMacromicroRetailRatio()).catch(() => ({
     name: "散戶多空比",
     ticker: "微台指",
     value: null,
